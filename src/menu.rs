@@ -1,19 +1,28 @@
 //! The right-click menu (taskbar readout, floating window and tray icon) and
 //! the commands behind it.
 
+use std::cell::Cell;
 use std::mem::size_of;
-use std::ptr::null;
+use std::ptr::{null, null_mut};
 
-use windows_sys::Win32::Foundation::{HWND, POINT};
-use windows_sys::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, LOGFONTW, LOGPIXELSY, ReleaseDC};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetDC, GetDeviceCaps, InvalidateRect, LOGFONTW, LOGPIXELSY, ReleaseDC,
+};
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Controls::Dialogs::{
     CC_FULLOPEN, CC_RGBINIT, CF_INITTOLOGFONTSTRUCT, CF_LIMITSIZE, CF_NOVERTFONTS,
     CF_SCREENFONTS, CHOOSECOLORW, CHOOSEFONTW, ChooseColorW, ChooseFontW,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_RETURN, VK_SPACE};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, MF_CHECKED, MF_GRAYED,
-    MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW, SetForegroundWindow, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_CLOSE, WM_NULL,
+    AppendMenuW, CallNextHookEx, CreatePopupMenu, DestroyMenu, EnumThreadWindows, GetClassNameW,
+    GetCursorPos, GetMenuItemCount, GetMenuItemID, GetMenuState, HHOOK, HMENU, MENUITEMINFOW,
+    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_HILITE, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    MIIM_STRING, MSG, MSGF_MENU, MenuItemFromPoint, PostMessageW,
+    SetForegroundWindow, SetMenuItemInfoW, SetWindowsHookExW, TPM_NONOTIFY, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TrackPopupMenuEx, UnhookWindowsHookEx, WH_MSGFILTER, WM_CLOSE, WM_KEYDOWN,
+    WM_LBUTTONUP, WM_NULL,
 };
 
 use crate::app::{App, with_app};
@@ -83,10 +92,14 @@ fn build(a: &mut App) -> HMENU {
     add(m, SHOW_TRAY, "Show notification-area icon", s.show_tray_icon || forced, !forced);
     sep(m);
 
+    // Tick boxes in the user's order; clicking one keeps the menu open (see `filter`).
     let items = sub(m, "Items to show");
-    for (i, it) in ITEMS.iter().enumerate() {
-        add(items, ITEM_BASE + i as u32, it.menu_text(), s.has(*it), true);
+    for it in &s.order {
+        add(items, item_id(*it), &item_text(*it, s.has(*it)), false, true);
     }
+    sep(items);
+    add(items, ARRANGE, "Change order...", false, true);
+    ITEMS_MENU.with(|c| c.set(items));
     add(m, ARRANGE, "Arrange items...", false, true);
 
     let net = sub(m, "Network adapter");
@@ -143,11 +156,28 @@ fn build(a: &mut App) -> HMENU {
     m
 }
 
+thread_local! {
+    /// The "Items to show" submenu of the menu currently open.
+    static ITEMS_MENU: Cell<HMENU> = const { Cell::new(null_mut()) };
+}
+
+fn item_id(it: Item) -> u32 {
+    ITEM_BASE + ITEMS.iter().position(|&x| x == it).unwrap_or(0) as u32
+}
+
+/// "☑ CPU usage" / "☐ CPU usage": a box in front of every item, ticked or not.
+fn item_text(it: Item, on: bool) -> String {
+    format!("{}  {}", if on { '☑' } else { '☐' }, it.menu_text())
+}
+
 /// Shows the menu at screen point (x, y) and runs the chosen command.
 pub fn show(x: i32, y: i32) {
     let Some((menu, main)) = with_app(|a| (build(a), a.main)) else { return };
     let cmd = unsafe {
         SetForegroundWindow(main);
+        // A message filter for this thread only: lets item tick boxes toggle
+        // without closing the menu.
+        let hook = SetWindowsHookExW(WH_MSGFILTER, Some(filter), null_mut(), GetCurrentThreadId());
         let cmd = TrackPopupMenuEx(
             menu,
             TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
@@ -156,6 +186,10 @@ pub fn show(x: i32, y: i32) {
             main,
             null(),
         );
+        if !hook.is_null() {
+            UnhookWindowsHookEx(hook);
+        }
+        ITEMS_MENU.with(|c| c.set(null_mut()));
         PostMessageW(main, WM_NULL, 0, 0);
         DestroyMenu(menu); // also destroys the submenus
         cmd
@@ -163,6 +197,77 @@ pub fn show(x: i32, y: i32) {
     if cmd > 0 {
         run(cmd as u32, main);
     }
+}
+
+/// Runs inside the menu's own message loop. A click (or Space/Enter) on an
+/// item of "Items to show" toggles it in place and is swallowed, so the menu
+/// stays open for the next one.
+unsafe extern "system" fn filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if code == MSGF_MENU as i32 && lp != 0 {
+        let msg = unsafe { &*(lp as *const MSG) };
+        let items = ITEMS_MENU.with(|c| c.get());
+        if !items.is_null() {
+            let pos = match msg.message {
+                // The message may arrive on the owner window, so ask which entry of
+                // the items submenu (if open) is under the click point.
+                WM_LBUTTONUP => Some(unsafe { MenuItemFromPoint(null_mut(), items, msg.pt) }),
+                WM_KEYDOWN if msg.wParam == VK_SPACE as usize || msg.wParam == VK_RETURN as usize => {
+                    highlighted(items)
+                }
+                _ => None,
+            };
+            if let Some(pos) = pos.filter(|&p| p >= 0)
+                && toggle_at(items, pos)
+            {
+                return 1;
+            }
+        }
+    }
+    unsafe { CallNextHookEx(null_mut::<core::ffi::c_void>() as HHOOK, code, wp, lp) }
+}
+
+/// Position of the highlighted entry in `menu`, if any.
+fn highlighted(menu: HMENU) -> Option<i32> {
+    let n = unsafe { GetMenuItemCount(menu) };
+    (0..n).find(|&i| unsafe { GetMenuState(menu, i as u32, MF_BYPOSITION) } & MF_HILITE != 0)
+}
+
+/// Toggles the item at `pos` of the items submenu. False if `pos` is not an item.
+fn toggle_at(menu: HMENU, pos: i32) -> bool {
+    let id = unsafe { GetMenuItemID(menu, pos) };
+    if !(ITEM_BASE..ITEM_BASE + ITEMS.len() as u32).contains(&id) {
+        return false; // separator, "Change order..." or nothing
+    }
+    let it = ITEMS[(id - ITEM_BASE) as usize];
+    let Some(on) = with_app(|a| {
+        let on = !a.settings.has(it);
+        a.settings.set_item(it, on);
+        a.changed();
+        on
+    }) else {
+        return true;
+    };
+    crate::arrange::refresh();
+    let text = wide(&item_text(it, on));
+    unsafe {
+        let mut mii: MENUITEMINFOW = std::mem::zeroed();
+        mii.cbSize = size_of::<MENUITEMINFOW>() as u32;
+        mii.fMask = MIIM_STRING;
+        mii.dwTypeData = text.as_ptr() as *mut u16;
+        SetMenuItemInfoW(menu, id, 0, &mii);
+        EnumThreadWindows(GetCurrentThreadId(), Some(repaint_menu), 0);
+    }
+    true
+}
+
+/// Redraws the open menu windows (class "#32768") so the new tick shows.
+unsafe extern "system" fn repaint_menu(hwnd: HWND, _: LPARAM) -> windows_sys::core::BOOL {
+    let mut buf = [0u16; 16];
+    let n = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+    if String::from_utf16_lossy(&buf[..n.max(0) as usize]) == "#32768" {
+        unsafe { InvalidateRect(hwnd, null(), 1) };
+    }
+    1
 }
 
 pub fn show_at_cursor() {

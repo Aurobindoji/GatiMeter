@@ -40,7 +40,9 @@ to see exactly what your PC reports.
 * **Arrange items...** (in the menu) sets which items are shown and in what
   order. The taskbar fills column by column, top then bottom, and the window
   shows each item's place ("Column 2, top"). Changes appear at once.
-* Menu: items to show, network adapter, bytes or bits, labels, taskbar side,
+* **Items to show** has a tick box per item. The menu stays open while you
+  tick or untick, so several items can be changed in one go.
+* Menu: network adapter, bytes or bits, labels, taskbar side,
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.
 
