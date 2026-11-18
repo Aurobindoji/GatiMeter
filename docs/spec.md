@@ -60,6 +60,11 @@ opens Task Manager.
 * Show in taskbar / Show floating window
 * Items to show: upload, download, CPU, memory, GPU, disk, CPU temp, GPU temp,
   disk temp
+* Arrange items…: a window listing every item with a tick box (shown or
+  hidden), Move up / Move down, Reset order, and each shown item's place on
+  the taskbar ("Column 2, top"). The order is kept for hidden items too and is
+  stored as `order=` in the settings file. The floating window uses the same
+  order, top to bottom.
 * Network adapter: Automatic, or a named adapter
 * Speed units: bytes (KB/s) or bits (Kb/s)
 * Labels on/off

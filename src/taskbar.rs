@@ -30,6 +30,8 @@ pub struct TaskbarWin {
     font: Option<Font>,
     /// Last size drawn, used by `place` between redraws.
     size: (i32, i32),
+    /// Rows per column in the last layout (`usize::MAX` on a vertical taskbar).
+    pub rows: usize,
     last_rect: (i32, i32, i32, i32),
 }
 
@@ -65,6 +67,7 @@ impl TaskbarWin {
                 renderer: Renderer::new(),
                 font: None,
                 size: (0, 0),
+                rows: 0,
                 last_rect: (i32::MIN, 0, 0, 0),
             })
         }
@@ -122,6 +125,7 @@ impl TaskbarWin {
             }
         };
         let lay = self.renderer.layout(font, cells, &grid, label, value);
+        self.rows = if horizontal { grid.rows } else { usize::MAX };
         self.size = (lay.w, lay.h);
         self.place(s);
         // Alpha 1 is invisible but keeps the mouse on this window between the letters.

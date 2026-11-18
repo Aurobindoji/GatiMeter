@@ -87,7 +87,9 @@ pub struct Settings {
     pub show_taskbar: bool,
     pub show_floating: bool,
     pub show_tray_icon: bool,
-    /// Shown items, always in `ITEMS` order.
+    /// Every item once, in the order the user arranged them.
+    pub order: Vec<Item>,
+    /// Shown items, always in `order` sequence.
     pub items: Vec<Item>,
     /// Adapter name, or empty for automatic.
     pub adapter: String,
@@ -119,6 +121,7 @@ impl Default for Settings {
             show_taskbar: true,
             show_floating: false,
             show_tray_icon: true,
+            order: ITEMS.to_vec(),
             items: vec![Item::Up, Item::Down, Item::Cpu, Item::Mem],
             adapter: String::new(),
             bits: false,
@@ -170,7 +173,42 @@ impl Settings {
         if on {
             self.items.push(it);
         }
-        self.items.sort_by_key(|x| ITEMS.iter().position(|y| y == x));
+        self.sort_items();
+    }
+
+    fn sort_items(&mut self) {
+        let order = &self.order;
+        self.items.sort_by_key(|x| order.iter().position(|y| y == x));
+    }
+
+    /// Moves `it` one place earlier (`up`) or later in the order.
+    /// Returns false when it is already at that end.
+    pub fn move_item(&mut self, it: Item, up: bool) -> bool {
+        let Some(i) = self.order.iter().position(|&x| x == it) else { return false };
+        let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|&j| j < self.order.len()) };
+        let Some(j) = j else { return false };
+        self.order.swap(i, j);
+        self.sort_items();
+        true
+    }
+
+    pub fn reset_order(&mut self) {
+        self.order = ITEMS.to_vec();
+        self.sort_items();
+    }
+
+    /// Where shown item number `index` (0-based) sits when the readout has
+    /// `rows` rows per column.
+    pub fn place_text(index: usize, rows: usize) -> String {
+        match rows {
+            0 | 1 => format!("Position {}", index + 1),
+            2 => format!(
+                "Column {}, {}",
+                index / 2 + 1,
+                if index.is_multiple_of(2) { "top" } else { "bottom" }
+            ),
+            _ => format!("Row {}", index + 1),
+        }
     }
 
     pub fn load(path: &Path) -> Settings {
@@ -185,12 +223,14 @@ impl Settings {
 
     pub fn to_text(&self) -> String {
         let items: Vec<&str> = self.items.iter().map(|i| i.key()).collect();
+        let order: Vec<&str> = self.order.iter().map(|i| i.key()).collect();
         let opt = |v: Option<i32>| v.map(|v| v.to_string()).unwrap_or_default();
         let lines = [
             "# GatiMeter settings".to_string(),
             format!("show_taskbar={}", flag(self.show_taskbar)),
             format!("show_floating={}", flag(self.show_floating)),
             format!("show_tray_icon={}", flag(self.show_tray_icon)),
+            format!("order={}", order.join(",")),
             format!("items={}", items.join(",")),
             format!("adapter={}", self.adapter),
             format!("bits={}", flag(self.bits)),
@@ -227,6 +267,21 @@ impl Settings {
                 "show_taskbar" => s.show_taskbar = b,
                 "show_floating" => s.show_floating = b,
                 "show_tray_icon" => s.show_tray_icon = b,
+                "order" => {
+                    // Known keys in the given order, then any item the file left out.
+                    let mut order: Vec<Item> = Vec::new();
+                    for it in v.split(',').filter_map(|k| Item::from_key(k.trim())) {
+                        if !order.contains(&it) {
+                            order.push(it);
+                        }
+                    }
+                    for it in ITEMS {
+                        if !order.contains(&it) {
+                            order.push(it);
+                        }
+                    }
+                    s.order = order;
+                }
                 "items" => {
                     s.items.clear();
                     for key in v.split(',') {
@@ -271,6 +326,7 @@ impl Settings {
                 _ => {}
             }
         }
+        s.sort_items(); // "items" may come before "order" in a hand-edited file
         s
     }
 }
@@ -300,6 +356,44 @@ mod tests {
         assert_eq!(s.font_size10, 360);
         assert_eq!(s.items, vec![Item::Up, Item::Cpu]);
         assert_eq!(s.text_color, None);
+    }
+
+    #[test]
+    fn order_moves_and_round_trips() {
+        let mut s = Settings::default();
+        assert!(!s.move_item(Item::Up, true)); // already first
+        assert!(s.move_item(Item::Up, false));
+        assert_eq!(s.items, vec![Item::Down, Item::Up, Item::Cpu, Item::Mem]);
+        assert!(s.move_item(Item::CpuTemp, true)); // hidden item moves too
+        s.set_item(Item::CpuTemp, true);
+        assert_eq!(s.items, vec![Item::Down, Item::Up, Item::Cpu, Item::Mem, Item::CpuTemp]);
+        assert!(s.move_item(Item::CpuTemp, true)); // past hidden GPU: no visible change
+        assert_eq!(s.items, vec![Item::Down, Item::Up, Item::Cpu, Item::Mem, Item::CpuTemp]);
+        assert!(s.move_item(Item::CpuTemp, true)); // past RAM
+        assert_eq!(s.items, vec![Item::Down, Item::Up, Item::Cpu, Item::CpuTemp, Item::Mem]);
+        assert!(!s.move_item(Item::DiskTemp, false)); // already last
+        let back = Settings::from_text(&s.to_text());
+        assert_eq!(back, s);
+        s.reset_order();
+        assert_eq!(s.order, ITEMS.to_vec());
+        assert_eq!(s.items, vec![Item::Up, Item::Down, Item::Cpu, Item::Mem, Item::CpuTemp]);
+    }
+
+    #[test]
+    fn order_from_file_is_completed_and_applied() {
+        // items before order, an unknown key, a duplicate and missing items.
+        let s = Settings::from_text("items=up,cpu,mem\norder=mem,bogus,cpu,mem\n");
+        assert_eq!(s.order.len(), ITEMS.len());
+        assert_eq!(&s.order[..3], &[Item::Mem, Item::Cpu, Item::Up]);
+        assert_eq!(s.items, vec![Item::Mem, Item::Cpu, Item::Up]);
+    }
+
+    #[test]
+    fn place_names() {
+        assert_eq!(Settings::place_text(0, 2), "Column 1, top");
+        assert_eq!(Settings::place_text(3, 2), "Column 2, bottom");
+        assert_eq!(Settings::place_text(2, 1), "Position 3");
+        assert_eq!(Settings::place_text(4, 9), "Row 5");
     }
 
     #[test]

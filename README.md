@@ -37,6 +37,9 @@ to see exactly what your PC reports.
 * Right-click the readout (taskbar or floating window) or the tray icon for the menu.
 * Double-click the readout to open Task Manager.
 * Hover for details: today's and this month's traffic, memory in GB, temperatures.
+* **Arrange items...** (in the menu) sets which items are shown and in what
+  order. The taskbar fills column by column, top then bottom, and the window
+  shows each item's place ("Column 2, top"). Changes appear at once.
 * Menu: items to show, network adapter, bytes or bits, labels, taskbar side,
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.

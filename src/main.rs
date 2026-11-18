@@ -4,6 +4,7 @@
 //! Uses only user-mode Windows APIs; there is no kernel driver.
 
 mod app;
+mod arrange;
 mod floating;
 mod format;
 mod histwin;

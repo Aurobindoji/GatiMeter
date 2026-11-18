@@ -47,6 +47,7 @@ const AUTOSTART: u32 = 802;
 const DATA_DIR: u32 = 803;
 const ABOUT: u32 = 804;
 const EXIT: u32 = 805;
+const ARRANGE: u32 = 806;
 
 const INTERVALS: [(u32, &str); 4] = [(500, "0.5 s"), (1000, "1 s"), (2000, "2 s"), (5000, "5 s")];
 
@@ -86,6 +87,7 @@ fn build(a: &mut App) -> HMENU {
     for (i, it) in ITEMS.iter().enumerate() {
         add(items, ITEM_BASE + i as u32, it.menu_text(), s.has(*it), true);
     }
+    add(m, ARRANGE, "Arrange items...", false, true);
 
     let net = sub(m, "Network adapter");
     add(net, ADAPTER_AUTO, "Automatic (all connected adapters)", s.adapter.is_empty(), true);
@@ -209,6 +211,7 @@ fn run(cmd: u32, main: HWND) {
                 crate::histwin::show(&text);
             }
         }
+        ARRANGE => crate::arrange::show(),
         TASKMGR => sys::open_task_manager(),
         AUTOSTART => {
             let on = !sys::autostart_enabled();
@@ -227,6 +230,7 @@ fn run(cmd: u32, main: HWND) {
                     a.changed();
                 }
             });
+            crate::arrange::refresh(); // ticks and places, if the window is open
         }
     }
 }

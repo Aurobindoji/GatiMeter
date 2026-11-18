@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::HBRUSH;
 use windows_sys::Win32::UI::Controls::{ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, IDC_ARROW,
@@ -52,6 +53,11 @@ pub fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
 }
 
 pub fn register_class(name: &str, proc: WNDPROC, style: u32) {
+    register_class_bg(name, proc, style, null_mut());
+}
+
+/// Like `register_class`, with a background brush for windows that hold controls.
+pub fn register_class_bg(name: &str, proc: WNDPROC, style: u32, background: HBRUSH) {
     let n = wide(name);
     unsafe {
         let mut wc: WNDCLASSEXW = std::mem::zeroed();
@@ -61,6 +67,7 @@ pub fn register_class(name: &str, proc: WNDPROC, style: u32) {
         wc.hInstance = hinstance();
         wc.hCursor = LoadCursorW(null_mut(), IDC_ARROW);
         wc.hIcon = LoadIconW(hinstance(), 1 as _);
+        wc.hbrBackground = background;
         wc.lpszClassName = n.as_ptr();
         RegisterClassExW(&wc);
     }
@@ -108,6 +115,7 @@ pub fn run() {
     crate::taskbar::register();
     crate::floating::register();
     crate::histwin::register();
+    crate::arrange::register();
     TASKBAR_CREATED.store(
         unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
         Ordering::Relaxed,
@@ -161,6 +169,9 @@ pub fn run() {
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+        if crate::arrange::pre_translate(&msg) {
+            continue;
+        }
         unsafe {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -169,6 +180,16 @@ pub fn run() {
 }
 
 impl App {
+    /// Rows per column of the main readout: the taskbar's, or one long list
+    /// when only the floating window is shown.
+    pub fn layout_rows(&self) -> usize {
+        match &self.taskbar {
+            Some(t) if self.settings.show_taskbar && t.rows > 0 => t.rows,
+            _ if self.settings.show_floating => usize::MAX,
+            _ => 2,
+        }
+    }
+
     /// True when no readout window can be right-clicked, so the tray icon must stay.
     pub fn tray_forced(&self) -> bool {
         let s = &self.settings;
