@@ -108,6 +108,13 @@ pub fn open_task_manager() {
     shell_open("taskmgr.exe");
 }
 
+/// Local date and time as "2026-11-19 21:30".
+pub fn now_text() -> String {
+    let mut st: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut st) };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Date {
     pub y: i32,

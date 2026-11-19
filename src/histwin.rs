@@ -1,4 +1,5 @@
-//! "Traffic history" window: a read-only text box with the daily and monthly totals.
+//! A read-only text window: the traffic history (daily and monthly totals)
+//! and the SSD write report share it.
 
 use std::cell::Cell;
 use std::ptr::{null, null_mut};
@@ -31,8 +32,8 @@ pub fn register() {
     crate::app::register_class(CLASS, Some(proc), 0);
 }
 
-/// Opens the window (or brings it forward) showing `text`.
-pub fn show(text: &str) {
+/// Opens the window (or brings it forward) with `title`, showing `text`.
+pub fn show(title: &str, text: &str) {
     let mut hwnd = WIN.with(|w| w.get());
     unsafe {
         if hwnd.is_null() || IsWindow(hwnd) == 0 {
@@ -41,7 +42,7 @@ pub fn show(text: &str) {
             hwnd = CreateWindowExW(
                 0,
                 wide(CLASS).as_ptr(),
-                wide("GatiMeter - Traffic history").as_ptr(),
+                wide(title).as_ptr(),
                 WS_OVERLAPPEDWINDOW,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -57,6 +58,7 @@ pub fn show(text: &str) {
             }
             WIN.with(|c| c.set(hwnd));
         }
+        SetWindowTextW(hwnd, wide(title).as_ptr());
         let edit = EDIT.with(|e| e.get());
         let body = wide(&text.replace('\n', "\r\n"));
         SetWindowTextW(edit, body.as_ptr());

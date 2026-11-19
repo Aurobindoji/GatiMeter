@@ -46,6 +46,37 @@ to see exactly what your PC reports.
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.
 
+## SSD write warning (optional)
+
+Off unless you turn it on: **SSD write warning > Warn about heavy SSD writes**.
+It looks for a program that keeps writing to the SSDs, such as a driver
+that rewrites its log file over and over, and shows a notification:
+
+* Every 10 seconds it reads every program's write counter (one
+  `NtQuerySystemInformation` call, with no admin rights, and services running
+  as SYSTEM included) and what the SSDs really wrote (PDH
+  `PhysicalDisk Disk Write Bytes/sec`, only disks without seek penalty).
+* Every 10-second step, what the SSDs wrote is shared out among the programs
+  that write steadily (in at least 3 of every 4 steps), the most believable
+  first. A program whose counter runs above everything the SSDs wrote (a
+  browser's pipe traffic, for example) goes last and usually gets nothing.
+* It warns when a program's estimated share stays at or above the chosen limit
+  (1, 2, 5 or 10 GB per hour; 2 by default) for 15 minutes. One big file copy
+  does not count.
+* The same program is warned about at most once in 6 hours. Programs listed in
+  `write_ignore=` in settings.ini (comma separated, e.g. `steam.exe`) are never
+  warned about.
+* **SSD write report...** shows the last 15 minutes: what the SSDs wrote, the
+  busiest writers, and recent warnings (`%APPDATA%\GatiMeter\write_alerts.csv`).
+
+Limit: without admin rights Windows does not say which file a program writes,
+and a program's write counter also includes pipes and network traffic. So the
+report names the program, not the file. Resource Monitor (`resmon`, Disk tab)
+shows the file. GatiMeter only reads and warns; it never stops a program or
+deletes anything.
+
+## Files
+
 Settings: `%APPDATA%\GatiMeter\settings.ini`. Daily traffic:
 `%APPDATA%\GatiMeter\history.csv`. "Start with Windows" writes to
 `HKCU\...\CurrentVersion\Run`.
@@ -58,7 +89,7 @@ Needs Rust (MSVC toolchain) and the Windows SDK (for `rc.exe`).
 cargo build --release
 ```
 
-The program is `target\release\GatiMeter.exe` (single file, about 400 KB).
+The program is `target\release\GatiMeter.exe` (single file, about 500 KB).
 `python tools/make_icon.py` redraws the icon.
 
 ## Limits (0.1)

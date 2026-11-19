@@ -15,6 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 use crate::net::NetSampler;
 use crate::pdh::{Counter, Query};
 use crate::temps::{DiskTemp, GpuTemp};
+use crate::writewatch::{WriteSummary, WriteWatch};
 
 pub const WM_APP_SNAPSHOT: u32 = WM_APP + 1;
 
@@ -35,6 +36,8 @@ pub struct Snapshot {
     pub disk_temp: Option<f32>,
     pub adapters: Vec<String>,
     pub measured: Vec<String>,
+    /// Set at the end of each 10-second step of the SSD write watch.
+    pub write: Option<WriteSummary>,
 }
 
 /// What to read. Costly readings are only taken when they are shown.
@@ -47,6 +50,7 @@ pub struct SamplerCfg {
     pub cpu_temp: bool,
     pub gpu_temp: bool,
     pub disk_temp: bool,
+    pub write_watch: bool,
 }
 
 enum Ctl {
@@ -127,6 +131,8 @@ struct Sampler {
     disk_temp: DiskTemp,
     disk_temp_last: Option<f32>,
     disk_temp_at: Option<Instant>,
+    disk_write: Option<Counter>,
+    watch: Option<WriteWatch>,
 }
 
 fn ft(f: &FILETIME) -> u64 {
@@ -150,6 +156,8 @@ impl Sampler {
             disk_temp: DiskTemp::new(),
             disk_temp_last: None,
             disk_temp_at: None,
+            disk_write: None,
+            watch: None,
         }
     }
 
@@ -158,6 +166,7 @@ impl Sampler {
         let Some(q) = &self.query else { return };
         toggle(q, &mut self.gpu, cfg.gpu, "\\GPU Engine(*)\\Utilization Percentage");
         toggle(q, &mut self.disk, cfg.disk, "\\PhysicalDisk(*)\\% Idle Time");
+        toggle(q, &mut self.disk_write, cfg.write_watch, "\\PhysicalDisk(*)\\Disk Write Bytes/sec");
         if cfg.cpu_temp && self.thermal.is_none() && !self.thermal_tried {
             self.thermal_tried = true;
             self.thermal = q
@@ -256,6 +265,12 @@ impl Sampler {
         } else {
             self.disk_temp_at = None;
         }
+        if cfg.write_watch {
+            let rates = self.disk_write.as_ref().map(|c| c.array()).unwrap_or_default();
+            s.write = self.watch.get_or_insert_with(WriteWatch::new).sample(&rates);
+        } else {
+            self.watch = None;
+        }
         s
     }
 }
@@ -270,6 +285,7 @@ pub fn probe(rounds: u32, gap: Duration) -> Vec<Snapshot> {
         cpu_temp: true,
         gpu_temp: true,
         disk_temp: true,
+        write_watch: false, // needs 10 s steps; `--probe` prints its own lines
     };
     let mut s = Sampler::new();
     let mut out = Vec::new();

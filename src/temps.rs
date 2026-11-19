@@ -16,8 +16,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
-    IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_PROPERTY_QUERY,
-    STORAGE_TEMPERATURE_DATA_DESCRIPTOR, STORAGE_TEMPERATURE_INFO,
+    IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_PROPERTY_ID,
+    STORAGE_PROPERTY_QUERY, STORAGE_TEMPERATURE_DATA_DESCRIPTOR, STORAGE_TEMPERATURE_INFO,
     StorageDeviceTemperatureProperty,
 };
 use windows_sys::Win32::System::LibraryLoader::{
@@ -145,7 +145,7 @@ impl GpuTemp {
 
 // ------------------------------------------------------------------ disks
 
-const MAX_DRIVES: u32 = 16;
+pub const MAX_DRIVES: u32 = 16;
 const RESCAN: Duration = Duration::from_secs(60);
 
 /// Remembers which `\\.\PhysicalDriveN` report a temperature, rescanning now and then.
@@ -172,10 +172,12 @@ impl DiskTemp {
     }
 }
 
-fn drive_temp(index: u32) -> Option<f32> {
+/// Runs `IOCTL_STORAGE_QUERY_PROPERTY` for `prop` on `\\.\PhysicalDrive{index}`
+/// and returns how many bytes it wrote into `out`.
+pub fn query_drive_property(index: u32, prop: STORAGE_PROPERTY_ID, out: &mut [u64]) -> Option<usize> {
     let path = wide(&format!("\\\\.\\PhysicalDrive{index}"));
     unsafe {
-        // Access 0 is enough for this query and needs no admin rights.
+        // Access 0 is enough for property queries and needs no admin rights.
         let h = CreateFileW(
             path.as_ptr(),
             0,
@@ -189,27 +191,34 @@ fn drive_temp(index: u32) -> Option<f32> {
             return None;
         }
         let mut q: STORAGE_PROPERTY_QUERY = zeroed();
-        q.PropertyId = StorageDeviceTemperatureProperty;
+        q.PropertyId = prop;
         q.QueryType = PropertyStandardQuery;
-        let mut buf = [0u64; 128];
         let mut got = 0u32;
         let ok = DeviceIoControl(
             h,
             IOCTL_STORAGE_QUERY_PROPERTY,
             &q as *const _ as *const c_void,
             size_of::<STORAGE_PROPERTY_QUERY>() as u32,
-            buf.as_mut_ptr() as *mut c_void,
-            size_of_val(&buf) as u32,
+            out.as_mut_ptr() as *mut c_void,
+            size_of_val(out) as u32,
             &mut got,
             null_mut(),
         );
         CloseHandle(h);
-        if ok == 0 || (got as usize) < size_of::<STORAGE_TEMPERATURE_DATA_DESCRIPTOR>() {
-            return None;
-        }
+        (ok != 0).then_some(got as usize)
+    }
+}
+
+fn drive_temp(index: u32) -> Option<f32> {
+    let mut buf = [0u64; 128];
+    let got = query_drive_property(index, StorageDeviceTemperatureProperty, &mut buf)?;
+    if got < size_of::<STORAGE_TEMPERATURE_DATA_DESCRIPTOR>() {
+        return None;
+    }
+    unsafe {
         let d = &*(buf.as_ptr() as *const STORAGE_TEMPERATURE_DATA_DESCRIPTOR);
         let count = d.InfoCount as usize;
-        let max_fit = (got as usize - std::mem::offset_of!(STORAGE_TEMPERATURE_DATA_DESCRIPTOR, TemperatureInfo))
+        let max_fit = (got - std::mem::offset_of!(STORAGE_TEMPERATURE_DATA_DESCRIPTOR, TemperatureInfo))
             / size_of::<STORAGE_TEMPERATURE_INFO>();
         let infos = std::slice::from_raw_parts(d.TemperatureInfo.as_ptr(), count.min(max_fit));
         // Entry 0 is the device's overall (composite) temperature.

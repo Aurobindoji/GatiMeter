@@ -19,6 +19,7 @@ mod sys;
 mod taskbar;
 mod temps;
 mod tray;
+mod writewatch;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,4 +48,6 @@ fn probe() {
         println!("--- reading {}", i + 1);
         println!("{s:#?}");
     }
+    println!("--- SSD write watch");
+    print!("{}", writewatch::probe_text());
 }

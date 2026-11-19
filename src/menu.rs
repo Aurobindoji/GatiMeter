@@ -57,8 +57,13 @@ const DATA_DIR: u32 = 803;
 const ABOUT: u32 = 804;
 const EXIT: u32 = 805;
 const ARRANGE: u32 = 806;
+const WRITE_WATCH: u32 = 900;
+const WRITE_LIMIT_BASE: u32 = 910;
+const WRITE_REPORT: u32 = 920;
 
 const INTERVALS: [(u32, &str); 4] = [(500, "0.5 s"), (1000, "1 s"), (2000, "2 s"), (5000, "5 s")];
+/// Warning limits offered in the menu, in GB per hour.
+const WRITE_LIMITS: [u32; 4] = [1, 2, 5, 10];
 
 fn add(m: HMENU, id: u32, text: &str, checked: bool, enabled: bool) {
     let mut flags = MF_STRING;
@@ -146,6 +151,15 @@ fn build(a: &mut App) -> HMENU {
     }
     sep(m);
     add(m, HISTORY, "Traffic history...", false, true);
+    let ww = sub(m, "SSD write warning");
+    add(ww, WRITE_WATCH, "Warn about heavy SSD writes", s.write_watch, true);
+    sep(ww);
+    for (i, gb) in WRITE_LIMITS.iter().enumerate() {
+        let text = format!("Warn above {gb} GB per hour");
+        add(ww, WRITE_LIMIT_BASE + i as u32, &text, s.write_limit_gb == *gb, s.write_watch);
+    }
+    sep(ww);
+    add(ww, WRITE_REPORT, "SSD write report...", false, true);
     add(m, TASKMGR, "Open Task Manager", false, true);
     sep(m);
     add(m, AUTOSTART, "Start with Windows", sys::autostart_enabled(), true);
@@ -313,9 +327,10 @@ fn run(cmd: u32, main: HWND) {
         }
         HISTORY => {
             if let Some(text) = with_app(|a| a.history_report()) {
-                crate::histwin::show(&text);
+                crate::histwin::show("GatiMeter - Traffic history", &text);
             }
         }
+        WRITE_REPORT => open_write_report(),
         ARRANGE => crate::arrange::show(),
         TASKMGR => sys::open_task_manager(),
         AUTOSTART => {
@@ -337,6 +352,13 @@ fn run(cmd: u32, main: HWND) {
             });
             crate::arrange::refresh(); // ticks and places, if the window is open
         }
+    }
+}
+
+/// Opens the SSD write report (from the menu or a clicked warning).
+pub fn open_write_report() {
+    if let Some(text) = with_app(|a| a.write_report()) {
+        crate::histwin::show("GatiMeter - SSD write report", &text);
     }
 }
 
@@ -375,6 +397,10 @@ fn apply(a: &mut App, cmd: u32) -> bool {
         c if (INTERVAL_BASE..INTERVAL_BASE + INTERVALS.len() as u32).contains(&c) => {
             s.interval_ms = INTERVALS[(c - INTERVAL_BASE) as usize].0
         }
+        WRITE_WATCH => s.write_watch = !s.write_watch,
+        c if (WRITE_LIMIT_BASE..WRITE_LIMIT_BASE + WRITE_LIMITS.len() as u32).contains(&c) => {
+            s.write_limit_gb = WRITE_LIMITS[(c - WRITE_LIMIT_BASE) as usize]
+        }
         _ => return false,
     }
     true
@@ -388,6 +414,9 @@ fn about_text() -> String {
          own GPU data and the storage temperature query).\n\n\
          CPU temperature comes from the ACPI thermal zone. Many PCs report a fixed \
          value there, so treat it as approximate.\n\n\
+         SSD write warning (off unless turned on) compares each program's write \
+         counter with what the SSDs really wrote. It only reads and warns; it never \
+         stops a program or deletes anything.\n\n\
          Licence: GPL-3.0-or-later.\nData folder: {}",
         sys::VERSION,
         sys::data_dir().display()

@@ -113,6 +113,12 @@ pub struct Settings {
     /// COLORREF, or `None` to follow the Windows theme / background.
     pub text_color: Option<u32>,
     pub interval_ms: u32,
+    /// SSD write warning (off unless the user turns it on).
+    pub write_watch: bool,
+    /// Warn above this many GB per hour (1..=100).
+    pub write_limit_gb: u32,
+    /// Program names (lower case) never warned about.
+    pub write_ignore: Vec<String>,
 }
 
 impl Default for Settings {
@@ -140,8 +146,22 @@ impl Default for Settings {
             font_bold: false,
             text_color: None,
             interval_ms: 1000,
+            write_watch: false,
+            write_limit_gb: 2,
+            write_ignore: Vec::new(),
         }
     }
+}
+
+/// "Steam.exe, ,qbittorrent.exe" -> ["steam.exe", "qbittorrent.exe"]
+fn name_list(v: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in v.split(',').map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty()) {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 fn color_to_text(c: u32) -> String {
@@ -249,6 +269,9 @@ impl Settings {
             format!("font_bold={}", flag(self.font_bold)),
             format!("text_color={}", self.text_color.map(color_to_text).unwrap_or_else(|| "auto".into())),
             format!("interval_ms={}", self.interval_ms),
+            format!("write_watch={}", flag(self.write_watch)),
+            format!("write_limit_gb={}", self.write_limit_gb),
+            format!("write_ignore={}", self.write_ignore.join(",")),
         ];
         lines.join("\r\n") + "\r\n"
     }
@@ -323,6 +346,13 @@ impl Settings {
                         s.interval_ms = p.clamp(250, 10_000);
                     }
                 }
+                "write_watch" => s.write_watch = b,
+                "write_limit_gb" => {
+                    if let Ok(p) = v.parse::<u32>() {
+                        s.write_limit_gb = p.clamp(1, 100);
+                    }
+                }
+                "write_ignore" => s.write_ignore = name_list(v),
                 _ => {}
             }
         }
@@ -344,9 +374,23 @@ mod tests {
         s.float_x = Some(-120);
         s.text_color = Some(0x0012_3456);
         s.float_bg = 0x00AB_CDEF;
+        s.write_watch = true;
+        s.write_limit_gb = 5;
+        s.write_ignore = vec!["steam.exe".into(), "qbittorrent.exe".into()];
         let back = Settings::from_text(&s.to_text());
         assert_eq!(back, s);
         assert_eq!(back.items, vec![Item::Up, Item::Down, Item::Cpu, Item::GpuTemp]);
+    }
+
+    #[test]
+    fn write_watch_values() {
+        let d = Settings::default();
+        assert!(!d.write_watch);
+        assert_eq!(d.write_limit_gb, 2);
+        let s = Settings::from_text("write_limit_gb=0\nwrite_ignore= Steam.exe, ,steam.exe,QBitTorrent.exe \n");
+        assert_eq!(s.write_limit_gb, 1);
+        assert_eq!(s.write_ignore, vec!["steam.exe", "qbittorrent.exe"]);
+        assert_eq!(Settings::from_text("write_limit_gb=500\n").write_limit_gb, 100);
     }
 
     #[test]

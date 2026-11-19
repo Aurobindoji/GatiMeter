@@ -75,8 +75,65 @@ opens Task Manager.
   background, opacity, background colour
 * Font…, text colour (automatic or chosen)
 * Update interval: 0.5, 1, 2 or 5 s
-* Traffic history…, Open Task Manager, Start with Windows, Open data folder,
-  About, Exit
+* Traffic history…
+* SSD write warning: Warn about heavy SSD writes (on/off, off by default),
+  Warn above 1 / 2 / 5 / 10 GB per hour, SSD write report…
+* Open Task Manager, Start with Windows, Open data folder, About, Exit
+
+## SSD write warning
+
+Optional and off by default. Its purpose is to catch a program that keeps
+writing to the SSD while nothing visible happens (for example a driver
+service that rewrites its log file again and again).
+
+Sources, all without admin rights:
+
+* Every process's write I/O byte counter, read for all processes at once
+  with `NtQuerySystemInformation(SystemProcessInformation)` (the I/O counters
+  of the documented `SYSTEM_PROCESS_INFORMATION`). Opening each process with
+  `OpenProcess` was rejected: without admin rights it fails for services that
+  run as SYSTEM, which are the main suspects. This counter also counts pipes
+  and some network traffic.
+* What the SSDs wrote: PDH `\PhysicalDisk(*)\Disk Write Bytes/sec`, summed over
+  the disks whose `StorageDeviceSeekPenaltyProperty` says no seek penalty. If
+  no such disk is found, all disks are summed.
+
+Rule: the readings form 10-second steps; the last 90 steps (15 minutes) are
+kept. The SSD bytes of each step are shared out among the steady writers
+(processes that wrote in at least 75 % of the steps):
+
+1. Order: smallest "overshoot" first (the bytes by which the process's
+   counter ran above the SSD total, summed over the steps), then the bigger
+   writer, then the lower process id.
+2. A writer takes part only if, in at least 75 % of its steps, its bytes fit
+   what is left of that step: at most twice the bytes left plus 1 MB (cache
+   flushes that land a moment later, rewrites the cache merged).
+3. It then takes `min(its bytes, bytes left)` from each step. The sum is its
+   estimated share of the SSD writes.
+
+A process is warned about when the window is full and its share reaches the
+limit for that time. This came from a live test: a browser whose counter
+(mostly pipe traffic) ran above everything the SSDs wrote was blamed together
+with the real writer under the first, simpler rule (counter and SSD total both
+above the limit).
+
+Idle and System (process ids 0 and 4) are listed but never warned about. A
+process id that now belongs to another program starts from zero. A step longer
+than 60 s (sleep, hibernation) starts a new window.
+
+The warning is a notification from the tray icon (shown just for the warning
+if the icon is hidden). Clicking it opens the SSD write report. Each warning is
+added to `%APPDATA%\GatiMeter\write_alerts.csv`
+(`time,process,pid,process_bytes,ssd_share_bytes,ssd_bytes,seconds`). The same program is not
+warned about again for 6 hours. Settings: `write_watch`, `write_limit_gb`
+(1–100), `write_ignore` (comma-separated program names).
+
+The report window shows the watched disks, what they wrote in the window, the
+busiest writers (program, process id, write I/O counter, estimated share
+per hour, share of steps active), the ignore list and the last 10 warnings.
+
+`--probe` also prints the SSD drive numbers found and the ten processes that
+wrote most since they started.
 
 ## Traffic history
 
@@ -86,7 +143,8 @@ history window shows today, this month, monthly totals and daily totals.
 
 ## Settings
 
-`%APPDATA%\GatiMeter\settings.ini`, plain `key=value` lines. Start with Windows
+`%APPDATA%\GatiMeter\settings.ini`, plain `key=value` lines. Keys added later
+(such as `write_watch`) default to their documented value when missing. Start with Windows
 uses `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (no admin rights).
 
 ## Non-goals for 0.1

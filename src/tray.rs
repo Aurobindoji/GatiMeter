@@ -10,8 +10,9 @@ use windows_sys::Win32::UI::Controls::{
     TTTOOLINFOW,
 };
 use windows_sys::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
-    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_RESPECT_QUIET_TIME, NIIF_WARNING,
+    NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyIcon, DestroyWindow, GetSystemMetrics, HICON,
@@ -23,6 +24,9 @@ use crate::sys::{hinstance, wide};
 
 pub const WM_APP_TRAY: u32 = WM_APP + 2;
 pub const NIN_KEYSELECT: u32 = 1025;
+pub const NIN_BALLOONHIDE: u32 = 0x403;
+pub const NIN_BALLOONTIMEOUT: u32 = 0x404;
+pub const NIN_BALLOONUSERCLICK: u32 = 0x405;
 
 pub struct Tray {
     hwnd: HWND,
@@ -74,6 +78,27 @@ impl Tray {
                 self.shown = false;
             }
         }
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.shown
+    }
+
+    /// Shows a warning notification from the icon (it must be shown).
+    pub fn balloon(&mut self, title: &str, text: &str) -> bool {
+        if !self.shown {
+            return false;
+        }
+        let mut d = self.data();
+        d.uFlags |= NIF_INFO;
+        for (dst, src) in d.szInfoTitle.iter_mut().take(63).zip(title.encode_utf16()) {
+            *dst = src;
+        }
+        for (dst, src) in d.szInfo.iter_mut().take(255).zip(text.encode_utf16()) {
+            *dst = src;
+        }
+        d.dwInfoFlags = NIIF_WARNING | NIIF_RESPECT_QUIET_TIME;
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) != 0 }
     }
 
     /// After Explorer restarts, every icon has to be added again.

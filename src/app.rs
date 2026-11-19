@@ -5,6 +5,7 @@
 //! a message arrives while the state is already borrowed.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::mem::size_of;
 use std::path::PathBuf;
@@ -31,12 +32,18 @@ use crate::sampler::{SamplerCfg, SamplerHandle, Snapshot, WM_APP_SNAPSHOT};
 use crate::settings::{Item, Settings};
 use crate::sys::{self, Date, hinstance, wide};
 use crate::taskbar::TaskbarWin;
-use crate::tray::{NIN_KEYSELECT, Tooltip, Tray, WM_APP_TRAY};
+use crate::tray::{
+    NIN_BALLOONHIDE, NIN_BALLOONTIMEOUT, NIN_BALLOONUSERCLICK, NIN_KEYSELECT, Tooltip, Tray,
+    WM_APP_TRAY,
+};
+use crate::writewatch::{self, WriteEntry, WriteSummary};
 
 const MAIN_CLASS: &str = "GatiMeter.Main";
 const TIMER_PLACE: usize = 1;
 const NIN_SELECT: u32 = 0x400;
 const HISTORY_SAVE_EVERY: Duration = Duration::from_secs(300);
+/// The same program is not warned about again for this long.
+const WRITE_ALERT_AGAIN: Duration = Duration::from_secs(6 * 3600);
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -89,6 +96,12 @@ pub struct App {
     last_save: Instant,
     /// Adapter names in the order the last menu listed them.
     pub menu_adapters: Vec<String>,
+    /// Latest SSD write watch summary (while the watch is on).
+    write: Option<WriteSummary>,
+    /// Lower-case program name -> when it was last warned about.
+    write_alerted: HashMap<String, Instant>,
+    /// The tray icon is shown only to carry a warning.
+    tray_for_alert: bool,
 }
 
 fn sampler_cfg(s: &Settings) -> SamplerCfg {
@@ -100,6 +113,7 @@ fn sampler_cfg(s: &Settings) -> SamplerCfg {
         cpu_temp: s.has(Item::CpuTemp),
         gpu_temp: s.has(Item::GpuTemp),
         disk_temp: s.has(Item::DiskTemp),
+        write_watch: s.write_watch,
     }
 }
 
@@ -162,6 +176,9 @@ pub fn run() {
         light_taskbar: sys::system_uses_light_theme(),
         last_save: Instant::now(),
         menu_adapters: Vec::new(),
+        write: None,
+        write_alerted: HashMap::new(),
+        tray_for_alert: false,
     };
     APP.with(|c| *c.borrow_mut() = Some(app));
     with_app(|a| a.apply());
@@ -206,6 +223,9 @@ impl App {
 
     pub fn apply(&mut self) {
         self.sampler.set_cfg(sampler_cfg(&self.settings));
+        if !self.settings.write_watch {
+            self.write = None;
+        }
         self.sync_taskbar();
         if self.settings.show_floating {
             if self.floating.is_none() {
@@ -225,8 +245,57 @@ impl App {
     }
 
     fn sync_tray(&mut self) {
-        let need = self.settings.show_tray_icon || self.tray_forced();
+        let need = self.settings.show_tray_icon || self.tray_forced() || self.tray_for_alert;
         self.tray.set_visible(need);
+    }
+
+    /// The warning was clicked, closed or timed out.
+    pub fn balloon_done(&mut self) {
+        if self.tray_for_alert {
+            self.tray_for_alert = false;
+            self.sync_tray();
+        }
+    }
+
+    /// Warns about programs that keep writing heavily to the SSDs.
+    fn check_writes(&mut self) {
+        let Some(s) = &self.write else { return };
+        let limit = self.settings.write_limit_gb as u64 * writewatch::GB;
+        let fresh: Vec<WriteEntry> = writewatch::suspects(s, limit)
+            .into_iter()
+            .filter(|e| {
+                let key = e.name.to_lowercase();
+                !self.settings.write_ignore.contains(&key)
+                    && self.write_alerted.get(&key).is_none_or(|t| t.elapsed() >= WRITE_ALERT_AGAIN)
+            })
+            .cloned()
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let when = sys::now_text();
+        for e in &fresh {
+            self.write_alerted.insert(e.name.to_lowercase(), Instant::now());
+            let _ = writewatch::log_alert(&self.dir, &when, e, s);
+        }
+        let refs: Vec<&WriteEntry> = fresh.iter().collect();
+        let (title, text) = writewatch::alert_text(&refs, s);
+        if !self.tray.is_shown() {
+            self.tray_for_alert = true;
+            self.sync_tray();
+        }
+        self.tray.balloon(&title, &text);
+    }
+
+    pub fn write_report(&self) -> String {
+        let s = &self.settings;
+        writewatch::report(
+            self.write.as_ref(),
+            s.write_watch,
+            s.write_limit_gb,
+            &s.write_ignore,
+            &writewatch::recent_alerts(&self.dir, 10),
+        )
     }
 
     fn sync_taskbar(&mut self) {
@@ -266,6 +335,12 @@ impl App {
         }
         for s in &snaps {
             self.history.add(today, s.delta_up, s.delta_down);
+        }
+        if self.settings.write_watch
+            && let Some(w) = snaps.iter().rev().find_map(|s| s.write.clone())
+        {
+            self.write = Some(w);
+            self.check_writes();
         }
         self.snap = last;
         if self.last_save.elapsed() >= HISTORY_SAVE_EVERY {
@@ -432,9 +507,16 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             0
         }
         WM_APP_TRAY => {
-            let event = (lp as u32) & 0xFFFF;
-            if matches!(event, WM_CONTEXTMENU | NIN_SELECT | NIN_KEYSELECT) {
-                crate::menu::show_at_cursor();
+            match (lp as u32) & 0xFFFF {
+                WM_CONTEXTMENU | NIN_SELECT | NIN_KEYSELECT => crate::menu::show_at_cursor(),
+                NIN_BALLOONUSERCLICK => {
+                    with_app(|a| a.balloon_done());
+                    crate::menu::open_write_report();
+                }
+                NIN_BALLOONTIMEOUT | NIN_BALLOONHIDE => {
+                    with_app(|a| a.balloon_done());
+                }
+                _ => {}
             }
             0
         }
