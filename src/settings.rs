@@ -113,7 +113,7 @@ pub struct Settings {
     /// COLORREF, or `None` to follow the Windows theme / background.
     pub text_color: Option<u32>,
     pub interval_ms: u32,
-    /// SSD write warning (off unless the user turns it on).
+    /// SSD write warning (on by default since 0.1.6; the menu turns it off).
     pub write_watch: bool,
     /// Warn above this many GB per hour (1..=100).
     pub write_limit_gb: u32,
@@ -146,7 +146,7 @@ impl Default for Settings {
             font_bold: false,
             text_color: None,
             interval_ms: 1000,
-            write_watch: false,
+            write_watch: true,
             write_limit_gb: 2,
             write_ignore: Vec::new(),
         }
@@ -385,7 +385,9 @@ mod tests {
     #[test]
     fn write_watch_values() {
         let d = Settings::default();
-        assert!(!d.write_watch);
+        assert!(d.write_watch);
+        // A saved choice wins over the default.
+        assert!(!Settings::from_text("write_watch=0\n").write_watch);
         assert_eq!(d.write_limit_gb, 2);
         let s = Settings::from_text("write_limit_gb=0\nwrite_ignore= Steam.exe, ,steam.exe,QBitTorrent.exe \n");
         assert_eq!(s.write_limit_gb, 1);

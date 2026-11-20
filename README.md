@@ -2,11 +2,13 @@
 
 ![icon](res/gatimeter-256.png)
 
-Network speed and system load on the Windows taskbar, with **no kernel driver**.
+Network speed, system load and SSD-write warnings on the Windows taskbar, with
+**no kernel driver**.
 
 GatiMeter (गति = speed) shows upload/download speed, CPU, memory, GPU and disk
 load, and CPU/GPU/disk temperatures, either inside the taskbar next to the tray
-icons or in a small floating window.
+icons or in a small floating window. It also warns when a program keeps
+writing heavily to your SSD (see [SSD write warning](#ssd-write-warning)).
 
 ## Why
 
@@ -47,9 +49,10 @@ to see exactly what your PC reports.
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.
 
-## SSD write warning (optional)
+## SSD write warning
 
-Off unless you turn it on: **SSD write warning > Warn about heavy SSD writes**.
+On by default (since 0.1.6). To turn it off, untick **SSD write warning > Warn
+about heavy SSD writes**; your choice is kept.
 It looks for a program that keeps writing to the SSDs, such as a driver
 that rewrites its log file over and over, and shows a notification:
 

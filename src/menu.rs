@@ -415,7 +415,7 @@ fn about_text() -> String {
          own GPU data and the storage temperature query).\n\n\
          CPU temperature comes from the ACPI thermal zone. Many PCs report a fixed \
          value there, so treat it as approximate.\n\n\
-         SSD write warning (off unless turned on) compares each program's write \
+         SSD write warning (on by default) compares each program's write \
          counter with what the SSDs really wrote. It only reads and warns; it never \
          stops a program or deletes anything.\n\n\
          Licence: GPL-3.0-or-later.\nData folder: {}",

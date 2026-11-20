@@ -1,4 +1,4 @@
-//! SSD write watch (optional, off by default): warns when one program keeps
+//! SSD write watch (on by default, can be turned off): warns when one program keeps
 //! writing a lot to the SSDs, the way some display drivers have done with a
 //! log file that they rewrite over and over.
 //!

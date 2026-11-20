@@ -76,7 +76,7 @@ opens Task Manager.
 * Font…, text colour (automatic or chosen)
 * Update interval: 0.5, 1, 2 or 5 s
 * Traffic history…
-* SSD write warning: Warn about heavy SSD writes (on/off, off by default),
+* SSD write warning: Warn about heavy SSD writes (on/off, on by default since 0.1.6),
   Warn above 1 / 2 / 5 / 10 GB per hour, SSD write report…
 * Open Task Manager, Start with Windows, Open data folder, About, Exit
 
@@ -99,7 +99,8 @@ light. The taskbar readout keeps following the taskbar's own theme.
 
 ## SSD write warning
 
-Optional and off by default. Its purpose is to catch a program that keeps
+On by default since 0.1.6 (off by default in 0.1.3–0.1.5); a settings file
+that already holds `write_watch=` keeps the user's choice. Its purpose is to catch a program that keeps
 writing to the SSD while nothing visible happens (for example a driver
 service that rewrites its log file again and again).
 

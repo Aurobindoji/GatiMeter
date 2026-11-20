@@ -1,9 +1,9 @@
 [package]
 name = "gatimeter"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Network speed and system load on the Windows taskbar, without any kernel driver"
+description = "Network speed, system load and SSD-write warnings on the Windows taskbar, without any kernel driver"
 build = "build.rs"
 publish = false
 
