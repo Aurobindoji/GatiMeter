@@ -196,6 +196,15 @@ pub fn system_uses_light_theme() -> bool {
     ) == Some(1)
 }
 
+/// True when Windows apps use the light theme (Settings > Personalisation > Colours).
+pub fn apps_use_light_theme() -> bool {
+    reg_get_dword(
+        HKEY_CURRENT_USER,
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        "AppsUseLightTheme",
+    ) != Some(0)
+}
+
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 fn exe_command() -> String {

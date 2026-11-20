@@ -187,6 +187,7 @@ fn item_text(it: Item, on: bool) -> String {
 /// Shows the menu at screen point (x, y) and runs the chosen command.
 pub fn show(x: i32, y: i32) {
     let Some((menu, main)) = with_app(|a| (build(a), a.main)) else { return };
+    crate::theme::sync_menus(); // dark or light, as Windows apps are now
     let cmd = unsafe {
         SetForegroundWindow(main);
         // A message filter for this thread only: lets item tick boxes toggle

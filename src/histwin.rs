@@ -14,8 +14,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY,
     GetClientRect, IsWindow, MoveWindow, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOZORDER,
     SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow, WM_CREATE,
-    WM_DESTROY, WM_DPICHANGED, WM_SETFONT, WM_SIZE, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
+    WM_DESTROY, WM_DPICHANGED, WM_SETFONT, WM_SIZE, WS_CHILD,
+    WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 
 use crate::sys::{hinstance, wide};
@@ -59,6 +59,9 @@ pub fn show(title: &str, text: &str) {
             WIN.with(|c| c.set(hwnd));
         }
         SetWindowTextW(hwnd, wide(title).as_ptr());
+        // Follow a theme change made while the window was closed or hidden.
+        crate::theme::title_bar(hwnd);
+        crate::theme::control(EDIT.with(|e| e.get()), "DarkMode_Explorer");
         let edit = EDIT.with(|e| e.get());
         let body = wide(&text.replace('\n', "\r\n"));
         SetWindowTextW(edit, body.as_ptr());
@@ -99,7 +102,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 | (ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32;
             let edit = unsafe {
                 CreateWindowExW(
-                    WS_EX_CLIENTEDGE,
+                    0, // no sunken edge: it shows as a white frame in dark mode
                     wide("EDIT").as_ptr(),
                     null(),
                     style,
@@ -115,8 +118,15 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             };
             EDIT.with(|e| e.set(edit));
             set_font(hwnd);
+            crate::theme::title_bar(hwnd);
+            crate::theme::control(edit, "DarkMode_Explorer"); // dark scroll bar
             0
         }
+        // A read-only edit box asks with WM_CTLCOLORSTATIC.
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT => match crate::theme::ctl_color(wp as _) {
+            Some(b) => b as LRESULT,
+            None => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+        },
         WM_SIZE => {
             let mut r = RECT::default();
             unsafe {

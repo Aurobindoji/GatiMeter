@@ -80,6 +80,23 @@ opens Task Manager.
   Warn above 1 / 2 / 5 / 10 GB per hour, SSD write report…
 * Open Task Manager, Start with Windows, Open data folder, About, Exit
 
+## Dark and light theme
+
+The menu, the text window (traffic history, SSD write report) and the
+Arrange window follow the Windows app theme (Settings > Personalisation >
+Colours > app mode), checked each time the menu or a window opens:
+
+* Menus: uxtheme `SetPreferredAppMode` (ForceDark / ForceLight) and
+  `FlushMenuThemes`, exported by ordinal 135 and 136 since Windows 10 1903.
+  If they are missing, menus stay light.
+* Title bars: `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)`.
+* Controls: `SetWindowTheme` with "DarkMode_Explorer" (buttons, list, scroll
+  bars) and "DarkMode_ItemsView" (list header); text boxes, labels and the
+  list get background #202020 and text #E8E8E8.
+
+Message boxes and the font and colour pickers are drawn by Windows and stay
+light. The taskbar readout keeps following the taskbar's own theme.
+
 ## SSD write warning
 
 Optional and off by default. Its purpose is to catch a program that keeps

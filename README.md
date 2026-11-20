@@ -42,6 +42,7 @@ to see exactly what your PC reports.
   shows each item's place ("Column 2, top"). Changes appear at once.
 * **Items to show** has a tick box per item. The menu stays open while you
   tick or untick, so several items can be changed in one go.
+* Menus and windows follow the Windows app theme (dark or light).
 * Menu: network adapter, bytes or bits, labels, taskbar side,
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.

@@ -18,6 +18,7 @@ mod settings;
 mod sys;
 mod taskbar;
 mod temps;
+mod theme;
 mod tray;
 mod writewatch;
 

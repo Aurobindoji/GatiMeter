@@ -6,11 +6,13 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    COLOR_BTNFACE, CreateFontIndirectW, DEFAULT_CHARSET, DeleteObject, HBRUSH, HFONT, LOGFONTW,
+    COLOR_BTNFACE, CreateFontIndirectW, DEFAULT_CHARSET, DeleteObject, FillRect, HBRUSH, HDC,
+    HFONT, LOGFONTW,
 };
 use windows_sys::Win32::UI::Controls::{
     LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
-    LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS, LVM_ENSUREVISIBLE, LVM_GETNEXTITEM,
+    LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS, LVM_ENSUREVISIBLE, LVM_GETHEADER,
+    LVM_GETNEXTITEM, LVM_SETBKCOLOR, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
     LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE,
     LVM_SETITEMSTATE, LVM_SETITEMTEXTW, LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_CHECKBOXES,
     LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
@@ -19,10 +21,11 @@ use windows_sys::Win32::UI::Controls::{
 use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BS_PUSHBUTTON, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GetDlgItem,
-    IsDialogMessageW, IsWindow, MSG, MoveWindow, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOZORDER,
-    SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, WM_APP, WM_COMMAND, WM_CREATE,
-    WM_DESTROY, WM_DPICHANGED, WM_NOTIFY, WM_SETFONT, WS_BORDER, WS_CAPTION, WS_CHILD,
+    BS_PUSHBUTTON, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect,
+    GetDlgItem, IsDialogMessageW, IsWindow, MSG, MoveWindow, SW_SHOWNORMAL, SWP_NOACTIVATE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, WM_APP,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_NOTIFY, WM_SETFONT, WS_BORDER, WS_CAPTION, WS_CHILD,
     WS_EX_CONTROLPARENT, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
@@ -61,6 +64,7 @@ pub fn show() {
     let hwnd = WIN.with(|w| w.get());
     unsafe {
         if !hwnd.is_null() && IsWindow(hwnd) != 0 {
+            apply_theme(hwnd);
             fill(None);
             ShowWindow(hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(hwnd);
@@ -170,6 +174,30 @@ fn create_controls(hwnd: HWND) {
     child(hwnd, button.as_ptr(), "Move &down", push, ID_DOWN);
     child(hwnd, button.as_ptr(), "&Reset order", push, ID_RESET);
     child(hwnd, button.as_ptr(), "Close", push, ID_CLOSE);
+    apply_theme(hwnd);
+}
+
+/// Dark or light window, list and buttons, as Windows apps are now.
+fn apply_theme(hwnd: HWND) {
+    use crate::theme;
+    theme::title_bar(hwnd);
+    unsafe {
+        let list = GetDlgItem(hwnd, ID_LIST);
+        theme::control(list, "DarkMode_Explorer");
+        let header = SendMessageW(list, LVM_GETHEADER, 0, 0) as HWND;
+        theme::control(header, "DarkMode_ItemsView");
+        let (bg, fg) = if theme::dark() {
+            (theme::DARK_BG, theme::DARK_TEXT)
+        } else {
+            (0x00FF_FFFF, 0x0000_0000)
+        };
+        SendMessageW(list, LVM_SETBKCOLOR, 0, bg as isize);
+        SendMessageW(list, LVM_SETTEXTBKCOLOR, 0, bg as isize);
+        SendMessageW(list, LVM_SETTEXTCOLOR, 0, fg as isize);
+        for id in [ID_UP, ID_DOWN, ID_RESET, ID_CLOSE] {
+            theme::control(GetDlgItem(hwnd, id), "DarkMode_Explorer");
+        }
+    }
 }
 
 /// Positions the controls and sets their font for the window's current DPI.
@@ -370,6 +398,18 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             fill(None);
             0
         }
+        WM_ERASEBKGND if crate::theme::dark() => {
+            let mut r = RECT::default();
+            unsafe {
+                GetClientRect(hwnd, &mut r);
+                FillRect(wp as HDC, &r, crate::theme::dark_brush());
+            }
+            1
+        }
+        WM_CTLCOLORSTATIC => match crate::theme::ctl_color(wp as HDC) {
+            Some(b) => b as LRESULT,
+            None => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+        },
         WM_DPICHANGED => {
             let r = unsafe { &*(lp as *const RECT) };
             unsafe {
