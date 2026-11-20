@@ -28,7 +28,7 @@ admin rights and does not trip the antivirus.
 | GPU usage | PDH `GPU Engine` counters, busiest engine |
 | Disk activity | PDH `PhysicalDisk % Idle Time`, busiest disk |
 | GPU temperature | display driver's adapter performance data (`D3DKMTQueryAdapterInfo`) |
-| Disk temperature | `IOCTL_STORAGE_QUERY_PROPERTY` (NVMe, most SATA SSDs) |
+| Disk temperature | `IOCTL_STORAGE_QUERY_PROPERTY` (NVMe, most SATA SSDs); the hottest disk by default, or one chosen in the menu |
 | CPU temperature | ACPI thermal zone counter: **approximate**; many PCs report a fixed value here |
 
 Readings Windows does not give are shown as `--`. Run `GatiMeter.exe --probe > probe.txt`
@@ -45,7 +45,7 @@ to see exactly what your PC reports.
 * **Items to show** has a tick box per item. The menu stays open while you
   tick or untick, so several items can be changed in one go.
 * Menus and windows follow the Windows app theme (dark or light).
-* Menu: network adapter, bytes or bits, labels, taskbar side,
+* Menu: network adapter, disk for the temperature, bytes or bits, labels, taskbar side,
   floating-window options (always on top, click-through, lock, opacity,
   colours), font, update interval, traffic history, start with Windows.
 

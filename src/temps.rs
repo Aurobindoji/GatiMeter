@@ -17,8 +17,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
     IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_PROPERTY_ID,
-    STORAGE_PROPERTY_QUERY, STORAGE_TEMPERATURE_DATA_DESCRIPTOR, STORAGE_TEMPERATURE_INFO,
-    StorageDeviceTemperatureProperty,
+    STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, STORAGE_TEMPERATURE_DATA_DESCRIPTOR,
+    STORAGE_TEMPERATURE_INFO, StorageDeviceProperty, StorageDeviceTemperatureProperty,
 };
 use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
@@ -148,9 +148,10 @@ impl GpuTemp {
 pub const MAX_DRIVES: u32 = 16;
 const RESCAN: Duration = Duration::from_secs(60);
 
-/// Remembers which `\\.\PhysicalDriveN` report a temperature, rescanning now and then.
+/// Remembers which `\\.\PhysicalDriveN` report a temperature (and their
+/// names), rescanning now and then.
 pub struct DiskTemp {
-    drives: Vec<u32>,
+    drives: Vec<(u32, String)>,
     scanned: Option<Instant>,
 }
 
@@ -159,17 +160,77 @@ impl DiskTemp {
         DiskTemp { drives: Vec::new(), scanned: None }
     }
 
-    /// Hottest disk in °C.
-    pub fn read(&mut self) -> Option<f32> {
+    /// Every disk that reports a temperature: (name, °C), in drive order.
+    pub fn read(&mut self) -> Vec<(String, f32)> {
         if self.scanned.is_none_or(|t| t.elapsed() >= RESCAN) {
-            self.drives = (0..MAX_DRIVES).filter(|&i| drive_temp(i).is_some()).collect();
+            let found: Vec<u32> = (0..MAX_DRIVES).filter(|&i| drive_temp(i).is_some()).collect();
+            let models: Vec<(u32, String)> =
+                found.iter().map(|&i| (i, drive_model(i).unwrap_or_default())).collect();
+            self.drives = unique_names(&models);
             self.scanned = Some(Instant::now());
         }
         self.drives
             .iter()
-            .filter_map(|&i| drive_temp(i))
-            .fold(None, |best: Option<f32>, t| Some(best.map_or(t, |b| b.max(t))))
+            .filter_map(|(i, n)| drive_temp(*i).map(|t| (n.clone(), t)))
+            .collect()
     }
+}
+
+/// The temperature to show: the named disk, or the hottest when `choice` is empty.
+pub fn pick_disk_temp(all: &[(String, f32)], choice: &str) -> Option<f32> {
+    if choice.is_empty() {
+        all.iter().map(|(_, t)| *t).fold(None, |b: Option<f32>, t| Some(b.map_or(t, |b| b.max(t))))
+    } else {
+        all.iter().find(|(n, _)| n == choice).map(|(_, t)| *t)
+    }
+}
+
+/// Model names that can tell the disks apart. Two disks of the same model
+/// (or one without a name) get "(Disk N)" added.
+fn unique_names(models: &[(u32, String)]) -> Vec<(u32, String)> {
+    models
+        .iter()
+        .map(|(i, m)| {
+            let twin = models.iter().filter(|(_, o)| o == m).count() > 1;
+            let name = if m.is_empty() {
+                format!("Disk {i}")
+            } else if twin {
+                format!("{m} (Disk {i})")
+            } else {
+                m.clone()
+            };
+            (*i, name)
+        })
+        .collect()
+}
+
+/// Product name of `\\.\PhysicalDrive{index}`, e.g. "CT1000T500SSD8".
+fn drive_model(index: u32) -> Option<String> {
+    let mut buf = [0u64; 128];
+    let got = query_drive_property(index, StorageDeviceProperty, &mut buf)?;
+    if got < size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, got) };
+    let d = unsafe { &*(buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
+    let text = |off: u32| -> String {
+        let off = off as usize;
+        if off == 0 || off >= bytes.len() {
+            return String::new();
+        }
+        let end = bytes[off..].iter().position(|&b| b == 0).map_or(bytes.len(), |p| off + p);
+        String::from_utf8_lossy(&bytes[off..end]).trim().to_string()
+    };
+    let product = text(d.ProductIdOffset);
+    let vendor = text(d.VendorIdOffset);
+    let name = if product.is_empty() {
+        vendor
+    } else if vendor.is_empty() || product.starts_with(&vendor) {
+        product
+    } else {
+        format!("{vendor} {product}")
+    };
+    (!name.is_empty()).then_some(name)
 }
 
 /// Runs `IOCTL_STORAGE_QUERY_PROPERTY` for `prop` on `\\.\PhysicalDrive{index}`
@@ -227,5 +288,22 @@ fn drive_temp(index: u32) -> Option<f32> {
             .map(|i| i.Temperature)
             .filter(|t| (1..=125).contains(t))
             .map(|t| t as f32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_names_and_choice() {
+        let n = unique_names(&[(0, "T500".into()), (1, "ORICO".into()), (2, "ORICO".into()), (3, String::new())]);
+        let names: Vec<&str> = n.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(names, ["T500", "ORICO (Disk 1)", "ORICO (Disk 2)", "Disk 3"]);
+        let all = vec![("T500".to_string(), 39.0), ("ORICO".to_string(), 45.0)];
+        assert_eq!(pick_disk_temp(&all, ""), Some(45.0));
+        assert_eq!(pick_disk_temp(&all, "T500"), Some(39.0));
+        assert_eq!(pick_disk_temp(&all, "gone"), None);
+        assert_eq!(pick_disk_temp(&[], ""), None);
     }
 }

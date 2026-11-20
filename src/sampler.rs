@@ -14,7 +14,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 use crate::net::NetSampler;
 use crate::pdh::{Counter, Query};
-use crate::temps::{DiskTemp, GpuTemp};
+use crate::temps::{DiskTemp, GpuTemp, pick_disk_temp};
 use crate::writewatch::{WriteSummary, WriteWatch};
 
 pub const WM_APP_SNAPSHOT: u32 = WM_APP + 1;
@@ -34,6 +34,8 @@ pub struct Snapshot {
     pub cpu_temp: Option<f32>,
     pub gpu_temp: Option<f32>,
     pub disk_temp: Option<f32>,
+    /// Every disk that reports a temperature: (name, °C).
+    pub disk_temps: Vec<(String, f32)>,
     pub adapters: Vec<String>,
     pub measured: Vec<String>,
     /// Set at the end of each 10-second step of the SSD write watch.
@@ -50,6 +52,8 @@ pub struct SamplerCfg {
     pub cpu_temp: bool,
     pub gpu_temp: bool,
     pub disk_temp: bool,
+    /// Disk whose temperature is shown; empty for the hottest.
+    pub disk_temp_drive: String,
     pub write_watch: bool,
 }
 
@@ -129,7 +133,7 @@ struct Sampler {
     sys_times: Option<(u64, u64)>,
     gpu_temp: GpuTemp,
     disk_temp: DiskTemp,
-    disk_temp_last: Option<f32>,
+    disk_temp_last: Vec<(String, f32)>,
     disk_temp_at: Option<Instant>,
     disk_write: Option<Counter>,
     watch: Option<WriteWatch>,
@@ -154,7 +158,7 @@ impl Sampler {
             sys_times: None,
             gpu_temp: GpuTemp::new(),
             disk_temp: DiskTemp::new(),
-            disk_temp_last: None,
+            disk_temp_last: Vec::new(),
             disk_temp_at: None,
             disk_write: None,
             watch: None,
@@ -261,7 +265,8 @@ impl Sampler {
                 self.disk_temp_last = self.disk_temp.read();
                 self.disk_temp_at = Some(Instant::now());
             }
-            s.disk_temp = self.disk_temp_last;
+            s.disk_temp = pick_disk_temp(&self.disk_temp_last, &cfg.disk_temp_drive);
+            s.disk_temps = self.disk_temp_last.clone();
         } else {
             self.disk_temp_at = None;
         }
@@ -285,6 +290,7 @@ pub fn probe(rounds: u32, gap: Duration) -> Vec<Snapshot> {
         cpu_temp: true,
         gpu_temp: true,
         disk_temp: true,
+        disk_temp_drive: String::new(),
         write_watch: false, // needs 10 s steps; `--probe` prints its own lines
     };
     let mut s = Sampler::new();

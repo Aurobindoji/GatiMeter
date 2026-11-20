@@ -28,6 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use crate::app::{App, with_app};
 use crate::settings::{ITEMS, Item};
 use crate::sys::{self, wide};
+use crate::temps::MAX_DRIVES;
 
 const SHOW_TASKBAR: u32 = 100;
 const SHOW_FLOAT: u32 = 101;
@@ -60,6 +61,8 @@ const ARRANGE: u32 = 806;
 const WRITE_WATCH: u32 = 900;
 const WRITE_LIMIT_BASE: u32 = 910;
 const WRITE_REPORT: u32 = 920;
+const DISK_TEMP_AUTO: u32 = 1000;
+const DISK_TEMP_BASE: u32 = 1001; // + up to MAX_DRIVES
 
 const INTERVALS: [(u32, &str); 4] = [(500, "0.5 s"), (1000, "1 s"), (2000, "2 s"), (5000, "5 s")];
 /// Warning limits offered in the menu, in GB per hour.
@@ -118,6 +121,28 @@ fn build(a: &mut App) -> HMENU {
         add(net, ADAPTER_BASE + i as u32, n, *n == s.adapter, true);
     }
     a.menu_adapters = names;
+
+    // Which disk "Disk°" shows: the hottest (default) or one chosen by name.
+    let dt = sub(m, "Disk temperature");
+    add(dt, DISK_TEMP_AUTO, "Hottest disk (automatic)", s.disk_temp_drive.is_empty(), true);
+    sep(dt);
+    let mut disks: Vec<String> = a.snap.disk_temps.iter().map(|(n, _)| n.clone()).collect();
+    if !s.disk_temp_drive.is_empty() && !disks.contains(&s.disk_temp_drive) {
+        disks.push(s.disk_temp_drive.clone()); // chosen earlier, not found now
+    }
+    for (i, n) in disks.iter().enumerate().take(MAX_DRIVES as usize) {
+        let now = a.snap.disk_temps.iter().find(|(d, _)| d == n).map(|(_, c)| *c);
+        let text = match now {
+            Some(c) => format!("{n}    {}", crate::format::temp(Some(c))),
+            None => format!("{n}    (not found now)"),
+        };
+        add(dt, DISK_TEMP_BASE + i as u32, &text, *n == s.disk_temp_drive, true);
+    }
+    if disks.is_empty() {
+        let note = if s.has(Item::DiskTemp) { "No disk reports a temperature" } else { "Show \"Disk temperature\" to list the disks" };
+        add(dt, 0, note, false, false);
+    }
+    a.menu_disks = disks;
 
     let units = sub(m, "Speed units");
     add(units, UNIT_BYTES, "Bytes (KB/s, MB/s)", !s.bits, true);
@@ -379,6 +404,13 @@ fn apply(a: &mut App, cmd: u32) -> bool {
         c if (ADAPTER_BASE..ADAPTER_BASE + 50).contains(&c) => {
             match a.menu_adapters.get((c - ADAPTER_BASE) as usize) {
                 Some(n) => a.settings.adapter = n.clone(),
+                None => return false,
+            }
+        }
+        DISK_TEMP_AUTO => s.disk_temp_drive.clear(),
+        c if (DISK_TEMP_BASE..DISK_TEMP_BASE + MAX_DRIVES).contains(&c) => {
+            match a.menu_disks.get((c - DISK_TEMP_BASE) as usize) {
+                Some(n) => a.settings.disk_temp_drive = n.clone(),
                 None => return false,
             }
         }

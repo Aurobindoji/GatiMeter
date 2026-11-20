@@ -96,6 +96,7 @@ pub struct App {
     last_save: Instant,
     /// Adapter names in the order the last menu listed them.
     pub menu_adapters: Vec<String>,
+    pub menu_disks: Vec<String>,
     /// Latest SSD write watch summary (while the watch is on).
     write: Option<WriteSummary>,
     /// Lower-case program name -> when it was last warned about.
@@ -113,6 +114,7 @@ fn sampler_cfg(s: &Settings) -> SamplerCfg {
         cpu_temp: s.has(Item::CpuTemp),
         gpu_temp: s.has(Item::GpuTemp),
         disk_temp: s.has(Item::DiskTemp),
+        disk_temp_drive: s.disk_temp_drive.clone(),
         write_watch: s.write_watch,
     }
 }
@@ -176,6 +178,7 @@ pub fn run() {
         light_taskbar: sys::system_uses_light_theme(),
         last_save: Instant::now(),
         menu_adapters: Vec::new(),
+        menu_disks: Vec::new(),
         write: None,
         write_alerted: HashMap::new(),
         tray_for_alert: false,
@@ -475,6 +478,12 @@ impl App {
         }
         if n.disk.is_some() || n.disk_temp.is_some() {
             let _ = writeln!(t, "Disk: {}{}", format::percent(n.disk), temp(n.disk_temp, ""));
+        }
+        if n.disk_temps.len() > 1 {
+            for (name, c) in &n.disk_temps {
+                let mark = if *name == self.settings.disk_temp_drive { "  (shown)" } else { "" };
+                let _ = writeln!(t, "    {name}: {}{mark}", format::temp(Some(*c)));
+            }
         }
         t.trim_end().replace('\n', "\r\n")
     }

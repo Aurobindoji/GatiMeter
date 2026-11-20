@@ -93,6 +93,8 @@ pub struct Settings {
     pub items: Vec<Item>,
     /// Adapter name, or empty for automatic.
     pub adapter: String,
+    /// Disk whose temperature is shown, or empty for the hottest.
+    pub disk_temp_drive: String,
     pub bits: bool,
     pub labels: bool,
     pub taskbar_left: bool,
@@ -130,6 +132,7 @@ impl Default for Settings {
             order: ITEMS.to_vec(),
             items: vec![Item::Up, Item::Down, Item::Cpu, Item::Mem],
             adapter: String::new(),
+            disk_temp_drive: String::new(),
             bits: false,
             labels: true,
             taskbar_left: false,
@@ -253,6 +256,7 @@ impl Settings {
             format!("order={}", order.join(",")),
             format!("items={}", items.join(",")),
             format!("adapter={}", self.adapter),
+            format!("disk_temp_drive={}", self.disk_temp_drive),
             format!("bits={}", flag(self.bits)),
             format!("labels={}", flag(self.labels)),
             format!("taskbar_left={}", flag(self.taskbar_left)),
@@ -314,6 +318,7 @@ impl Settings {
                     }
                 }
                 "adapter" => s.adapter = v.to_string(),
+                "disk_temp_drive" => s.disk_temp_drive = v.to_string(),
                 "bits" => s.bits = b,
                 "labels" => s.labels = b,
                 "taskbar_left" => s.taskbar_left = b,
@@ -371,6 +376,7 @@ mod tests {
         s.set_item(Item::GpuTemp, true);
         s.set_item(Item::Mem, false);
         s.adapter = "Wi-Fi".into();
+        s.disk_temp_drive = "CT1000T500SSD8".into();
         s.float_x = Some(-120);
         s.text_color = Some(0x0012_3456);
         s.float_bg = 0x00AB_CDEF;

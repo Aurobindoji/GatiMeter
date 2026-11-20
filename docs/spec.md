@@ -68,6 +68,8 @@ opens Task Manager.
   stored as `order=` in the settings file. The floating window uses the same
   order, top to bottom.
 * Network adapter: Automatic, or a named adapter
+* Disk temperature: Hottest disk (automatic, the default), or one disk by
+  model name (saved as `disk_temp_drive`); the tooltip lists every disk
 * Speed units: bytes (KB/s) or bits (Kb/s)
 * Labels on/off
 * Taskbar position: next to the tray icons, or at the left end
