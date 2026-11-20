@@ -16,12 +16,17 @@
 //!   for the disks without seek penalty (`StorageDeviceSeekPenaltyProperty`).
 //!
 //! The SSD total of each 10-second step is then shared out among the steady
-//! writers (those that wrote in at least three of every four steps), the most
+//! writers, the most
 //! believable first: a counter that stays within the SSD total goes before one
 //! that runs above it (pipes), and a bigger writer before a smaller one. A
 //! writer takes `min(its bytes, what is left)` from each step, but only if its
 //! bytes fit what is left (at most twice that plus 1 MB) in three of four
-//! steps. What it took is its estimated share of the SSD writes.
+//! of its steps. What it took is its estimated share of the SSD writes.
+//!
+//! A steady writer wrote something in at least two of every three minutes of
+//! the window, and no single minute holds more than half of its bytes. A
+//! service that rewrites a whole log file every half minute counts (it may be
+//! idle in most 10-second steps); one big file copy does not.
 //!
 //! A process is a suspect when, over the last 15 minutes, its share reaches
 //! the chosen limit.
@@ -45,6 +50,8 @@ use crate::temps::{MAX_DRIVES, query_drive_property};
 pub const STEP: Duration = Duration::from_secs(10);
 /// 90 steps of 10 s: the last 15 minutes.
 pub const WINDOW_STEPS: usize = 90;
+/// Steps per minute (10-second steps).
+const STEPS_PER_MINUTE: usize = 6;
 /// A longer step means the PC slept or the sampler stalled: start over.
 const MAX_STEP: Duration = Duration::from_secs(60);
 /// Look for SSDs again now and then (a USB SSD may be plugged in).
@@ -72,6 +79,8 @@ pub struct WriteEntry {
     pub bytes: u64,
     /// Steps of the window in which it wrote anything.
     pub active: usize,
+    /// Minutes of the window in which it wrote anything.
+    pub minutes: usize,
     /// Estimated part of the SSD writes that came from it (0: not a steady
     /// writer, or its counter does not match the SSD writes).
     pub disk_share: u64,
@@ -154,6 +163,7 @@ impl Window {
                     name: name.to_string(),
                     bytes: v.iter().map(|x| x.1).sum(),
                     active: v.len(),
+                    minutes: per_minute(&v, self.steps.len()).iter().filter(|&&b| b > 0).count(),
                     disk_share: 0,
                 };
                 (e, v)
@@ -184,12 +194,38 @@ fn fits(bytes: u64, left: u64) -> bool {
     bytes <= left.saturating_mul(2).saturating_add(1024 * 1024)
 }
 
+/// Minutes in a window of `steps` steps (the last one may be short).
+pub fn window_minutes(steps: usize) -> usize {
+    steps.div_ceil(STEPS_PER_MINUTE)
+}
+
+/// A process's bytes added up per minute of the window.
+fn per_minute(v: &[(usize, u64)], steps: usize) -> Vec<u64> {
+    let mut m = vec![0u64; window_minutes(steps)];
+    for &(i, b) in v {
+        if let Some(slot) = m.get_mut(i / STEPS_PER_MINUTE) {
+            *slot += b;
+        }
+    }
+    m
+}
+
+/// Wrote in at least two of every three minutes, with no minute holding more
+/// than half of its bytes (see the module notes).
+fn steady(v: &[(usize, u64)], steps: usize) -> bool {
+    let m = per_minute(v, steps);
+    let active = m.iter().filter(|&&b| b > 0).count();
+    let total: u64 = m.iter().sum();
+    let biggest = m.iter().copied().max().unwrap_or(0);
+    total > 0 && active * 3 >= m.len() * 2 && biggest.saturating_mul(2) <= total
+}
+
 /// Fills `disk_share` of the steady writers; see the module notes.
 fn share_out(all: &mut [(WriteEntry, Vec<(usize, u64)>)], disk: &[u64]) {
     let n = disk.len();
     let overshoot = |v: &[(usize, u64)]| v.iter().map(|&(i, b)| b.saturating_sub(disk[i])).sum::<u64>();
     let mut order: Vec<usize> = (0..all.len())
-        .filter(|&k| all[k].0.pid > LAST_KERNEL_PID && all[k].0.active * 4 >= n * 3)
+        .filter(|&k| all[k].0.pid > LAST_KERNEL_PID && steady(&all[k].1, n))
         .collect();
     order.sort_by_key(|&k| (overshoot(&all[k].1), std::cmp::Reverse(all[k].0.bytes), all[k].0.pid));
     let mut left = disk.to_vec();
@@ -524,15 +560,17 @@ pub fn report(s: Option<&WriteSummary>, on: bool, limit_gb: u32, ignore: &[Strin
                 let _ = writeln!(t);
                 let _ = writeln!(t, "Busiest writers. \"Write I/O\" is the program's own counter; it also");
                 let _ = writeln!(t, "counts pipes and network traffic. \"To SSD\" is the estimated part of");
-                let _ = writeln!(t, "the SSD writes that came from it (only for steady writers).");
+                let _ = writeln!(t, "the SSD writes that came from it (only for steady writers: active in");
+                let _ = writeln!(t, "at least 2 of every 3 minutes, no minute holding half of it).");
                 let _ = writeln!(t);
                 let _ = writeln!(
                     t,
-                    "  {:<40} {:>10} {:>13} {:>7}",
-                    "Program (process id)", "Write I/O", "To SSD /hour", "Active"
+                    "  {:<40} {:>10} {:>13} {:>11}",
+                    "Program (process id)", "Write I/O", "To SSD /hour", "Active min"
                 );
+                let total_min = window_minutes(s.steps);
                 for e in &s.top {
-                    let active = (e.active * 100).checked_div(s.steps).unwrap_or(0);
+                    let active = format!("{}/{}", e.minutes, total_min);
                     let share = if e.disk_share == 0 {
                         "-".to_string()
                     } else {
@@ -540,7 +578,7 @@ pub fn report(s: Option<&WriteSummary>, on: bool, limit_gb: u32, ignore: &[Strin
                     };
                     let _ = writeln!(
                         t,
-                        "  {:<40} {:>10} {:>13} {:>6}%",
+                        "  {:<40} {:>10} {:>13} {:>11}",
                         name_pid(e),
                         format::bytes(e.bytes),
                         share,
@@ -625,7 +663,14 @@ mod tests {
         assert_eq!(s.disk, 90 * 12 * MB);
         assert_eq!(
             s.top[0],
-            WriteEntry { pid: 100, name: "a.exe".into(), bytes: 900 * MB, active: 90, disk_share: 900 * MB }
+            WriteEntry {
+                pid: 100,
+                name: "a.exe".into(),
+                bytes: 900 * MB,
+                active: 90,
+                minutes: 15,
+                disk_share: 900 * MB
+            }
         );
         assert_eq!((s.top[1].active, s.top[1].disk_share), (1, 0));
         // 900 MB in 15 min = 3.5 GB per hour.
@@ -633,6 +678,45 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "a.exe");
         assert!(suspects(&s, 5 * GB).is_empty());
+    }
+
+    #[test]
+    fn log_rewritten_every_half_minute_is_caught() {
+        // Like the reported NVIDIA case: a 19 MB file rewritten in one go every
+        // 30 s (every third step) = about 2.2 GB per hour; idle in 2 of 3 steps.
+        let s = run(90, |i| {
+            let nv = (i / 3) * 19 * MB;
+            let disk = if i % 3 == 0 { 20 * MB } else { MB };
+            (disk, vec![pc(10, "NVDisplay.Container.exe", nv)])
+        });
+        let e = &s.top[0];
+        assert_eq!((e.active, e.minutes), (30, 15));
+        assert_eq!(e.disk_share, 30 * 19 * MB);
+        let found = suspects(&s, 2 * GB);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "NVDisplay.Container.exe");
+    }
+
+    #[test]
+    fn writer_busy_for_only_a_few_minutes_is_not_steady() {
+        // 4 GB spread over the first 4 minutes, then nothing.
+        let s = run(90, |i| {
+            let w = i.min(24) * 170 * MB;
+            (if i <= 24 { 170 * MB } else { 0 }, vec![pc(10, "copy.exe", w)])
+        });
+        assert_eq!(s.top[0].minutes, 4);
+        assert!(suspects(&s, GB).is_empty());
+    }
+
+    #[test]
+    fn one_minute_holding_most_bytes_is_not_steady() {
+        // A trickle every minute plus one 2 GB burst.
+        let s = run(90, |i| {
+            let w = i * MB + if i >= 50 { 2 * GB } else { 0 };
+            (MB + if i == 50 { 2 * GB } else { 0 }, vec![pc(10, "mixed.exe", w)])
+        });
+        assert_eq!(s.top[0].minutes, 15);
+        assert_eq!(s.top[0].disk_share, 0);
     }
 
     #[test]

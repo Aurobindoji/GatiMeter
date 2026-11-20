@@ -116,8 +116,12 @@ Sources, all without admin rights:
   no such disk is found, all disks are summed.
 
 Rule: the readings form 10-second steps; the last 90 steps (15 minutes) are
-kept. The SSD bytes of each step are shared out among the steady writers
-(processes that wrote in at least 75 % of the steps):
+kept. The SSD bytes of each step are shared out among the steady writers:
+processes that wrote something in at least two of every three minutes of the
+window, where no single minute holds more than half of their bytes. (Until
+0.1.4 the rule was "at least 75 % of the 10-second steps"; that missed a
+service that rewrites a whole log file every 30 s, which is idle in most
+steps. A user report of driver 621.14 showed exactly that pattern.)
 
 1. Order: smallest "overshoot" first (the bytes by which the process's
    counter ran above the SSD total, summed over the steps), then the bigger
@@ -147,7 +151,7 @@ warned about again for 6 hours. Settings: `write_watch`, `write_limit_gb`
 
 The report window shows the watched disks, what they wrote in the window, the
 busiest writers (program, process id, write I/O counter, estimated share
-per hour, share of steps active), the ignore list and the last 10 warnings.
+per hour, active minutes out of the window's minutes), the ignore list and the last 10 warnings.
 
 `--probe` also prints the SSD drive numbers found and the ten processes that
 wrote most since they started.

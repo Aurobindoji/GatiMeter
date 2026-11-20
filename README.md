@@ -58,7 +58,8 @@ that rewrites its log file over and over, and shows a notification:
   as SYSTEM included) and what the SSDs really wrote (PDH
   `PhysicalDisk Disk Write Bytes/sec`, only disks without seek penalty).
 * Every 10-second step, what the SSDs wrote is shared out among the programs
-  that write steadily (in at least 3 of every 4 steps), the most believable
+  that write steadily (in at least 2 of every 3 minutes, with no single
+  minute holding half of their bytes), the most believable
   first. A program whose counter runs above everything the SSDs wrote (a
   browser's pipe traffic, for example) goes last and usually gets nothing.
 * It warns when a program's estimated share stays at or above the chosen limit
