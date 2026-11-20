@@ -43,7 +43,17 @@ const TIMER_PLACE: usize = 1;
 const NIN_SELECT: u32 = 0x400;
 const HISTORY_SAVE_EVERY: Duration = Duration::from_secs(300);
 /// The same program is not warned about again for this long.
-const WRITE_ALERT_AGAIN: Duration = Duration::from_secs(6 * 3600);
+const WRITE_ALERT_AGAIN: Duration = Duration::from_secs(3600);
+/// A program warned about longer ago than this starts a new streak.
+const WRITE_STREAK_GAP: Duration = Duration::from_secs(2 * 3600);
+
+/// The running state of one warned program.
+struct WriteStreak {
+    /// When its heavy writing began (the start of the first warned window).
+    started: Instant,
+    last_alert: Instant,
+    total: u64,
+}
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -101,8 +111,8 @@ pub struct App {
     pub menu_ignore: Vec<String>,
     /// Latest SSD write watch summary (while the watch is on).
     write: Option<WriteSummary>,
-    /// Lower-case program name -> when it was last warned about.
-    write_alerted: HashMap<String, Instant>,
+    /// Lower-case program name -> its warning streak.
+    write_alerted: HashMap<String, WriteStreak>,
     /// The tray icon is shown only to carry a warning.
     tray_for_alert: bool,
 }
@@ -272,7 +282,7 @@ impl App {
             .filter(|e| {
                 let key = e.name.to_lowercase();
                 !self.settings.write_ignore.contains(&key)
-                    && self.write_alerted.get(&key).is_none_or(|t| t.elapsed() >= WRITE_ALERT_AGAIN)
+                    && self.write_alerted.get(&key).is_none_or(|st| st.last_alert.elapsed() >= WRITE_ALERT_AGAIN)
             })
             .cloned()
             .collect();
@@ -280,12 +290,26 @@ impl App {
             return;
         }
         let when = sys::now_text();
+        let now = Instant::now();
+        let window = Duration::from_secs_f64(s.secs.max(0.0));
+        let mut streaks = Vec::new();
         for e in &fresh {
-            self.write_alerted.insert(e.name.to_lowercase(), Instant::now());
+            let key = e.name.to_lowercase();
+            let st = match self.write_alerted.get(&key) {
+                // Still going: add this window's rate over the time since the last warning.
+                Some(old) if old.last_alert.elapsed() < WRITE_STREAK_GAP => WriteStreak {
+                    started: old.started,
+                    last_alert: now,
+                    total: writewatch::streak_total(old.total, e.disk_share, s.secs, old.last_alert.elapsed().as_secs_f64()),
+                },
+                _ => WriteStreak { started: now.checked_sub(window).unwrap_or(now), last_alert: now, total: e.disk_share },
+            };
+            streaks.push(writewatch::Streak { minutes: st.started.elapsed().as_secs() / 60, total: st.total });
+            self.write_alerted.insert(key, st);
             let _ = writewatch::log_alert(&self.dir, &when, e, s);
         }
-        let refs: Vec<&WriteEntry> = fresh.iter().collect();
-        let (title, text) = writewatch::alert_text(&refs, s);
+        let list: Vec<(&WriteEntry, writewatch::Streak)> = fresh.iter().zip(streaks).collect();
+        let (title, text) = writewatch::alert_text(&list, s);
         if !self.tray.is_shown() {
             self.tray_for_alert = true;
             self.sync_tray();

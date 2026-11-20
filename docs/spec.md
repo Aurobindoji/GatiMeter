@@ -151,8 +151,16 @@ than 60 s (sleep, hibernation) starts a new window.
 The warning is a notification from the tray icon (shown just for the warning
 if the icon is hidden). Clicking it opens the SSD write report. Each warning is
 added to `%APPDATA%\GatiMeter\write_alerts.csv`
-(`time,process,pid,process_bytes,ssd_share_bytes,ssd_bytes,seconds`). The same program is not
-warned about again for 6 hours. Settings: `write_watch`, `write_limit_gb`
+(`time,process,pid,process_bytes,ssd_share_bytes,ssd_bytes,seconds`).
+
+While a program stays a suspect, the warning repeats every hour (until 0.1.8:
+once in 6 hours, far too quiet for a bug that writes GBs per hour). Each line
+of the warning gives the program's rate, about how much it has written since
+its heavy writing began, and for how long ("NVDisplay.Container.exe: 5.12
+GB/h, about 6.40 GB in 1 h 15 min"); from the second warning on the title is
+"Still heavy SSD writes". The running total adds, at each repeat, the current
+window's share scaled to the time since the previous warning. A program last
+warned about more than 2 hours ago starts a new count. Settings: `write_watch`, `write_limit_gb`
 (1–100), `write_ignore` (comma-separated program names).
 
 The report window shows the watched disks, what they wrote in the window, the

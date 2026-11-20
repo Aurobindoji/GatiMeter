@@ -463,19 +463,47 @@ fn name_pid(e: &WriteEntry) -> String {
     n
 }
 
+/// One warned program: since when it has been writing heavily and about how
+/// much it has written to the SSDs in that time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Streak {
+    pub minutes: u64,
+    pub total: u64,
+}
+
+/// Running total at a repeat warning: the previous total plus the current
+/// window's share scaled to the time since the previous warning.
+pub fn streak_total(prev_total: u64, share: u64, window_secs: f64, gap_secs: f64) -> u64 {
+    if window_secs <= 0.0 {
+        return prev_total;
+    }
+    prev_total.saturating_add((share as f64 * gap_secs / window_secs) as u64)
+}
+
+fn duration_text(minutes: u64) -> String {
+    if minutes < 60 { format!("{minutes} min") } else { format!("{} h {} min", minutes / 60, minutes % 60) }
+}
+
 /// Title and text of the warning balloon.
-pub fn alert_text(list: &[&WriteEntry], s: &WriteSummary) -> (String, String) {
-    let mins = (s.secs / 60.0).round();
+pub fn alert_text(list: &[(&WriteEntry, Streak)], s: &WriteSummary) -> (String, String) {
     let mut body = String::new();
-    for e in list.iter().take(3) {
-        let _ = writeln!(body, "{}: about {} per hour", e.name, format::bytes(per_hour(e.disk_share, s.secs)));
+    for (e, st) in list.iter().take(3) {
+        let _ = writeln!(
+            body,
+            "{}: {}/h, about {} in {}",
+            e.name,
+            format::bytes(per_hour(e.disk_share, s.secs)),
+            format::bytes(st.total),
+            duration_text(st.minutes)
+        );
     }
     let _ = write!(
         body,
-        "for {mins:.0} min. The SSDs wrote {} per hour. Click for details.",
+        "The SSDs wrote {} per hour. Click for details.",
         format::bytes(per_hour(s.disk, s.secs))
     );
-    ("Heavy SSD writes".to_string(), body)
+    let title = if list.iter().any(|(_, st)| st.minutes > 20) { "Still heavy SSD writes" } else { "Heavy SSD writes" };
+    (title.to_string(), body)
 }
 
 /// Adds one line per warning to `write_alerts.csv` in `dir`.
@@ -890,11 +918,24 @@ mod tests {
         assert!(report(None, false, 2, &[], &[]).contains("Status: off"));
 
         let found = suspects(&s, 2 * GB);
-        let (title, body) = alert_text(&found, &s);
+        let first = Streak { minutes: 15, total: found[0].disk_share };
+        let (title, body) = alert_text(&[(found[0], first)], &s);
         assert_eq!(title, "Heavy SSD writes");
-        assert!(body.starts_with("a.exe: about 3.52 GB per hour\nfor 15 min."));
+        assert!(body.starts_with("a.exe: 3.52 GB/h, about 900 MB in 15 min\n"));
         assert!(text.contains("To SSD /hour"));
         assert!(body.encode_utf16().count() < 256);
+
+        // An hour later: the repeat says so and adds up.
+        let total = streak_total(first.total, found[0].disk_share, s.secs, 3600.0);
+        assert_eq!(total, 900 * MB + 4 * 900 * MB);
+        let later = Streak { minutes: 75, total };
+        let (title, body) = alert_text(&[(found[0], later)], &s);
+        assert_eq!(title, "Still heavy SSD writes");
+        assert!(body.contains("about 4.39 GB in 1 h 15 min"));
+        // Three programs with long names still fit in a balloon.
+        let long = WriteEntry { name: "NVDisplay.Container.exe".into(), ..found[0].clone() };
+        let (_, body) = alert_text(&[(&long, later), (&long, later), (&long, later)], &s);
+        assert!(body.encode_utf16().count() < 256, "{}", body.len());
     }
 
     #[test]

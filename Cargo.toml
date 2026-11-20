@@ -1,6 +1,6 @@
 [package]
 name = "gatimeter"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Network speed, system load and SSD-write warnings on the Windows taskbar, without any kernel driver"
