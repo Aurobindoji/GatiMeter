@@ -68,9 +68,11 @@ that rewrites its log file over and over, and shows a notification:
 * It warns when a program's estimated share stays at or above the chosen limit
   (1, 2, 5 or 10 GB per hour; 2 by default) for 15 minutes. One big file copy
   does not count.
-* The same program is warned about at most once in 6 hours. Programs listed in
-  `write_ignore=` in settings.ini (comma separated, e.g. `steam.exe`) are never
-  warned about.
+* The same program is warned about at most once in 6 hours. To never be warned
+  about a program (a torrent client, for example), tick it in **SSD write
+  warning > Ignored programs**; untick it to watch it again. The list offers
+  the ignored programs, the recently warned ones and the busiest writers. The
+  choice is kept as `write_ignore=` in settings.ini.
 * **SSD write report...** shows the last 15 minutes: what the SSDs wrote, the
   busiest writers, and recent warnings (`%APPDATA%\GatiMeter\write_alerts.csv`).
 

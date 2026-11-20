@@ -61,6 +61,8 @@ const ARRANGE: u32 = 806;
 const WRITE_WATCH: u32 = 900;
 const WRITE_LIMIT_BASE: u32 = 910;
 const WRITE_REPORT: u32 = 920;
+const WRITE_IGNORE_BASE: u32 = 930; // + up to WRITE_IGNORE_MAX
+const WRITE_IGNORE_MAX: u32 = 20;
 const DISK_TEMP_AUTO: u32 = 1000;
 const DISK_TEMP_BASE: u32 = 1001; // + up to MAX_DRIVES
 
@@ -184,6 +186,17 @@ fn build(a: &mut App) -> HMENU {
         add(ww, WRITE_LIMIT_BASE + i as u32, &text, s.write_limit_gb == *gb, s.write_watch);
     }
     sep(ww);
+    // Tick a program to never be warned about it; untick to watch it again.
+    let ig = sub(ww, "Ignored programs");
+    let choices = a.ignore_choices();
+    let s = &a.settings;
+    for (i, n) in choices.iter().enumerate().take(WRITE_IGNORE_MAX as usize) {
+        add(ig, WRITE_IGNORE_BASE + i as u32, n, s.write_ignore.contains(n), true);
+    }
+    if choices.is_empty() {
+        add(ig, 0, "No writers seen yet", false, false);
+    }
+    a.menu_ignore = choices;
     add(ww, WRITE_REPORT, "SSD write report...", false, true);
     add(m, TASKMGR, "Open Task Manager", false, true);
     sep(m);
@@ -431,6 +444,18 @@ fn apply(a: &mut App, cmd: u32) -> bool {
             s.interval_ms = INTERVALS[(c - INTERVAL_BASE) as usize].0
         }
         WRITE_WATCH => s.write_watch = !s.write_watch,
+        c if (WRITE_IGNORE_BASE..WRITE_IGNORE_BASE + WRITE_IGNORE_MAX).contains(&c) => {
+            let Some(n) = a.menu_ignore.get((c - WRITE_IGNORE_BASE) as usize).cloned() else {
+                return false;
+            };
+            let list = &mut a.settings.write_ignore;
+            match list.iter().position(|x| *x == n) {
+                Some(i) => {
+                    list.remove(i);
+                }
+                None => list.push(n),
+            }
+        }
         c if (WRITE_LIMIT_BASE..WRITE_LIMIT_BASE + WRITE_LIMITS.len() as u32).contains(&c) => {
             s.write_limit_gb = WRITE_LIMITS[(c - WRITE_LIMIT_BASE) as usize]
         }

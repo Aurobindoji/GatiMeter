@@ -97,6 +97,8 @@ pub struct App {
     /// Adapter names in the order the last menu listed them.
     pub menu_adapters: Vec<String>,
     pub menu_disks: Vec<String>,
+    /// Program names in the order the last "Ignored programs" menu listed them.
+    pub menu_ignore: Vec<String>,
     /// Latest SSD write watch summary (while the watch is on).
     write: Option<WriteSummary>,
     /// Lower-case program name -> when it was last warned about.
@@ -179,6 +181,7 @@ pub fn run() {
         last_save: Instant::now(),
         menu_adapters: Vec::new(),
         menu_disks: Vec::new(),
+        menu_ignore: Vec::new(),
         write: None,
         write_alerted: HashMap::new(),
         tray_for_alert: false,
@@ -288,6 +291,16 @@ impl App {
             self.sync_tray();
         }
         self.tray.balloon(&title, &text);
+    }
+
+    /// Programs for the "Ignored programs" menu (lower case).
+    pub fn ignore_choices(&self) -> Vec<String> {
+        writewatch::ignore_choices(
+            self.write.as_ref(),
+            &self.settings.write_ignore,
+            &writewatch::recent_alert_names(&self.dir, 5),
+            20,
+        )
     }
 
     pub fn write_report(&self) -> String {

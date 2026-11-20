@@ -516,6 +516,48 @@ fn alert_line(line: &str) -> Option<String> {
     ))
 }
 
+/// Program names (lower case) of the newest warnings in the log, newest first.
+pub fn recent_alert_names(dir: &Path, n: usize) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(dir.join(LOG_FILE)) else { return Vec::new() };
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines().rev() {
+        let f: Vec<&str> = line.trim().split(',').collect();
+        if f.len() < 7 || f[4].parse::<u64>().is_err() {
+            continue; // header or bad line
+        }
+        let name = f[1].trim().to_lowercase();
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+        if out.len() >= n {
+            break;
+        }
+    }
+    out
+}
+
+/// Programs offered in the "Ignored programs" menu, lower case, at most
+/// `max`: the ignored ones first (so they can be un-ignored), then recently
+/// warned ones, then the busiest writers of the last summary.
+pub fn ignore_choices(
+    s: Option<&WriteSummary>,
+    ignored: &[String],
+    warned: &[String],
+    max: usize,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let busy = s.into_iter().flat_map(|s| s.top.iter()).filter(|e| e.pid > LAST_KERNEL_PID).map(|e| e.name.to_lowercase());
+    for n in ignored.iter().cloned().chain(warned.iter().cloned()).chain(busy) {
+        if out.len() >= max {
+            break;
+        }
+        if !n.is_empty() && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
 /// The newest `n` warnings from the log, newest first.
 pub fn recent_alerts(dir: &Path, n: usize) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(dir.join(LOG_FILE)) else { return Vec::new() };
@@ -597,8 +639,8 @@ pub fn report(s: Option<&WriteSummary>, on: bool, limit_gb: u32, ignore: &[Strin
     } else {
         let _ = writeln!(t, "Ignored programs: {}", ignore.join(", "));
     }
-    let _ = writeln!(t, "To ignore one, add it to write_ignore= in settings.ini (Open data folder),");
-    let _ = writeln!(t, "for example: write_ignore=steam.exe,qbittorrent.exe");
+    let _ = writeln!(t, "To ignore a program (or watch it again), tick it in the menu:");
+    let _ = writeln!(t, "SSD write warning > Ignored programs.");
     let _ = writeln!(t);
     let _ = writeln!(t, "Recent warnings, newest first ({LOG_FILE}):");
     if recent.is_empty() {
@@ -853,6 +895,36 @@ mod tests {
         assert!(body.starts_with("a.exe: about 3.52 GB per hour\nfor 15 min."));
         assert!(text.contains("To SSD /hour"));
         assert!(body.encode_utf16().count() < 256);
+    }
+
+    #[test]
+    fn programs_offered_for_ignoring() {
+        let s = run(90, |i| {
+            (20 * MB, vec![pc(4, "System", i * MB), pc(10, "qBittorrent.exe", i * 6 * MB), pc(11, "brave.exe", i * MB)])
+        });
+        let ignored = vec!["steam.exe".to_string()];
+        let warned = vec!["qbittorrent.exe".to_string(), "nv.exe".to_string()];
+        let c = ignore_choices(Some(&s), &ignored, &warned, 20);
+        // Ignored first, then warned, then busy writers; no duplicates, no System.
+        assert_eq!(c, vec!["steam.exe", "qbittorrent.exe", "nv.exe", "brave.exe"]);
+        assert_eq!(ignore_choices(None, &[], &[], 20), Vec::<String>::new());
+        assert_eq!(ignore_choices(Some(&s), &ignored, &warned, 2).len(), 2);
+    }
+
+    #[test]
+    fn warned_names_from_the_log() {
+        let dir = std::env::temp_dir().join(format!("gatimeter-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(LOG_FILE),
+            "time,process,pid,process_bytes,ssd_share_bytes,ssd_bytes,seconds\r\n\
+             2026-11-20 10:00,A.exe,1,5,5,9,900\r\n\
+             2026-11-20 11:00,qBittorrent.exe,2,5,5,9,900\r\n\
+             2026-11-20 12:00,a.exe,1,5,5,9,900\r\n",
+        )
+        .unwrap();
+        assert_eq!(recent_alert_names(&dir, 5), vec!["a.exe", "qbittorrent.exe"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

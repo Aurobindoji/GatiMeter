@@ -79,7 +79,10 @@ opens Task Manager.
 * Update interval: 0.5, 1, 2 or 5 s
 * Traffic history…
 * SSD write warning: Warn about heavy SSD writes (on/off, on by default since 0.1.6),
-  Warn above 1 / 2 / 5 / 10 GB per hour, SSD write report…
+  Warn above 1 / 2 / 5 / 10 GB per hour, Ignored programs (tick boxes, since
+  0.1.8: the ignored programs first, then the last 5 warned ones, then the
+  busiest writers of the last 15 minutes; at most 20, names in lower case),
+  SSD write report…
 * Open Task Manager, Start with Windows, Open data folder, About, Exit
 
 ## Dark and light theme
