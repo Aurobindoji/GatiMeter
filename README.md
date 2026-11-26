@@ -75,6 +75,10 @@ that rewrites its log file over and over, and shows a notification:
   warning > Ignored programs**; untick it to watch it again. The list offers
   the ignored programs, the recently warned ones and the busiest writers. The
   choice is kept as `write_ignore=` in settings.ini.
+* Each warning adds a hint. Web browsers write a lot (cache, history, many
+  tabs), so a browser is called "usually normal". Any other program, however
+  well known, can go wrong, so it is "worth checking". The report shows the
+  same hint in its **Likely** column.
 * **SSD write report...** shows the last 15 minutes: what the SSDs wrote, the
   busiest writers, and recent warnings (`%APPDATA%\GatiMeter\write_alerts.csv`).
 

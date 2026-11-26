@@ -458,7 +458,7 @@ impl WriteWatch {
 // ------------------------------------------------------ text and the log
 
 fn name_pid(e: &WriteEntry) -> String {
-    let mut n: String = e.name.chars().take(32).collect();
+    let mut n: String = e.name.chars().take(26).collect();
     let _ = write!(n, " ({})", e.pid);
     n
 }
@@ -484,24 +484,84 @@ fn duration_text(minutes: u64) -> String {
     if minutes < 60 { format!("{minutes} min") } else { format!("{} h {} min", minutes / 60, minutes % 60) }
 }
 
-/// Title and text of the warning balloon.
+/// Web browsers are the one kind of program whose heavy writes (cache,
+/// history, many tabs) are known to be usually harmless. Any other program,
+/// however well known, can go wrong and write without need, so it is never
+/// called normal.
+pub fn is_browser(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "brave.exe"
+            | "chrome.exe"
+            | "msedge.exe"
+            | "firefox.exe"
+            | "opera.exe"
+            | "vivaldi.exe"
+            | "librewolf.exe"
+            | "waterfox.exe"
+            | "chromium.exe"
+            | "thorium.exe"
+    )
+}
+
+/// Text for the report's "Likely" column. "check" only for a program that
+/// writes at the warning limit or more.
+pub fn likely(name: &str, heavy: bool) -> &'static str {
+    if is_browser(name) {
+        "browser - usually normal"
+    } else if heavy {
+        "worth checking"
+    } else {
+        "-"
+    }
+}
+
+/// The balloon's hint line for the warned programs.
+fn alert_hint(list: &[(&WriteEntry, Streak)]) -> String {
+    match list.iter().find(|(e, _)| !is_browser(&e.name)) {
+        None if list.len() == 1 => "A web browser (cache, history, tabs): usually normal.".to_string(),
+        None => "All are web browsers: usually normal.".to_string(),
+        Some(_) if list.len() == 1 => "Not a web browser: worth checking.".to_string(),
+        Some((e, _)) => format!("{}: not a web browser, worth checking.", e.name),
+    }
+}
+
+/// Windows shows at most this many characters of balloon text.
+const BALLOON_MAX: usize = 255;
+
+/// Title and text of the warning balloon. The text keeps, in this order of
+/// importance: the first program, the hint, "Click for details", the other
+/// programs and the SSD total, dropping from the end until it fits.
 pub fn alert_text(list: &[(&WriteEntry, Streak)], s: &WriteSummary) -> (String, String) {
-    let mut body = String::new();
-    for (e, st) in list.iter().take(3) {
-        let _ = writeln!(
-            body,
-            "{}: {}/h, about {} in {}",
+    let list = &list[..list.len().min(3)];
+    let line = |(e, st): &(&WriteEntry, Streak)| {
+        format!(
+            "{}: {}/h, about {} in {}\n",
             e.name,
             format::bytes(per_hour(e.disk_share, s.secs)),
             format::bytes(st.total),
             duration_text(st.minutes)
-        );
+        )
+    };
+    let total = format!("The SSDs wrote {} per hour. ", format::bytes(per_hour(s.disk, s.secs)));
+    let fits = |t: &str| t.encode_utf16().count() <= BALLOON_MAX;
+    let mut body = String::new();
+    'shorter: for keep in (1..=list.len().max(1)).rev() {
+        for with_total in [true, false] {
+            let shown = &list[..keep.min(list.len())];
+            let mut t: String = shown.iter().map(line).collect();
+            t.push_str(&alert_hint(shown));
+            t.push('\n');
+            if with_total {
+                t.push_str(&total);
+            }
+            t.push_str("Click for details.");
+            body = t;
+            if fits(&body) {
+                break 'shorter;
+            }
+        }
     }
-    let _ = write!(
-        body,
-        "The SSDs wrote {} per hour. Click for details.",
-        format::bytes(per_hour(s.disk, s.secs))
-    );
     let title = if list.iter().any(|(_, st)| st.minutes > 20) { "Still heavy SSD writes" } else { "Heavy SSD writes" };
     (title.to_string(), body)
 }
@@ -632,10 +692,12 @@ pub fn report(s: Option<&WriteSummary>, on: bool, limit_gb: u32, ignore: &[Strin
                 let _ = writeln!(t, "counts pipes and network traffic. \"To SSD\" is the estimated part of");
                 let _ = writeln!(t, "the SSD writes that came from it (only for steady writers: active in");
                 let _ = writeln!(t, "at least 2 of every 3 minutes, no minute holding half of it).");
+                let _ = writeln!(t, "\"Likely\": web browsers write a lot (cache, history, tabs) and are");
+                let _ = writeln!(t, "usually fine; any other program writing this much is worth checking.");
                 let _ = writeln!(t);
                 let _ = writeln!(
                     t,
-                    "  {:<40} {:>10} {:>13} {:>11}",
+                    "  {:<34} {:>10} {:>13} {:>11}  Likely",
                     "Program (process id)", "Write I/O", "To SSD /hour", "Active min"
                 );
                 let total_min = window_minutes(s.steps);
@@ -646,13 +708,15 @@ pub fn report(s: Option<&WriteSummary>, on: bool, limit_gb: u32, ignore: &[Strin
                     } else {
                         format::bytes(per_hour(e.disk_share, s.secs))
                     };
+                    let heavy = per_hour(e.disk_share, s.secs) >= limit_gb as u64 * GB;
                     let _ = writeln!(
                         t,
-                        "  {:<40} {:>10} {:>13} {:>11}",
+                        "  {:<34} {:>10} {:>13} {:>11}  {}",
                         name_pid(e),
                         format::bytes(e.bytes),
                         share,
-                        active
+                        active,
+                        likely(&e.name, heavy)
                     );
                 }
                 if s.top.is_empty() {
@@ -936,6 +1000,37 @@ mod tests {
         let long = WriteEntry { name: "NVDisplay.Container.exe".into(), ..found[0].clone() };
         let (_, body) = alert_text(&[(&long, later), (&long, later), (&long, later)], &s);
         assert!(body.encode_utf16().count() < 256, "{}", body.len());
+        assert!(body.contains("NVDisplay.Container.exe: not a web browser, worth checking."), "{body}");
+        assert!(body.ends_with("Click for details."));
+    }
+
+    #[test]
+    fn only_browsers_are_called_normal() {
+        assert!(is_browser("Brave.exe") && is_browser("firefox.exe"));
+        assert!(!is_browser("qbittorrent.exe") && !is_browser("python.exe") && !is_browser("Registry"));
+        assert_eq!(likely("brave.exe", true), "browser - usually normal");
+        assert_eq!(likely("steam.exe", true), "worth checking");
+        assert_eq!(likely("steam.exe", false), "-");
+
+        let s = run(90, |i| (12 * MB, vec![pc(100, "brave.exe", i * 10 * MB)]));
+        let found = suspects(&s, 2 * GB);
+        let st = Streak { minutes: 15, total: found[0].disk_share };
+        let (_, body) = alert_text(&[(found[0], st)], &s);
+        assert!(body.contains("\nA web browser (cache, history, tabs): usually normal.\n"), "{body}");
+        assert!(body.contains("The SSDs wrote"));
+
+        let c = WriteEntry { name: "chrome.exe".into(), ..found[0].clone() };
+        let (_, body) = alert_text(&[(found[0], st), (&c, st)], &s);
+        assert!(body.contains("All are web browsers: usually normal."), "{body}");
+        let q = WriteEntry { name: "qbittorrent.exe".into(), ..found[0].clone() };
+        let (_, body) = alert_text(&[(&q, st)], &s);
+        assert!(body.contains("\nNot a web browser: worth checking.\n"), "{body}");
+        let (_, body) = alert_text(&[(found[0], st), (&q, st)], &s);
+        assert!(body.contains("qbittorrent.exe: not a web browser, worth checking."), "{body}");
+
+        let text = report(Some(&s), true, 2, &[], &[]);
+        assert!(text.contains("Likely"));
+        assert!(text.contains("browser - usually normal"));
     }
 
     #[test]

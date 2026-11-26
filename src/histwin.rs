@@ -38,7 +38,7 @@ pub fn show(title: &str, text: &str) {
     unsafe {
         if hwnd.is_null() || IsWindow(hwnd) == 0 {
             let dpi = GetDpiForSystem().max(96) as i32;
-            let (w, h) = (620 * dpi / 96, 640 * dpi / 96);
+            let (w, h) = (760 * dpi / 96, 640 * dpi / 96);
             hwnd = CreateWindowExW(
                 0,
                 wide(CLASS).as_ptr(),

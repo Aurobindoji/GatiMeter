@@ -165,7 +165,16 @@ warned about more than 2 hours ago starts a new count. Settings: `write_watch`, 
 
 The report window shows the watched disks, what they wrote in the window, the
 busiest writers (program, process id, write I/O counter, estimated share
-per hour, active minutes out of the window's minutes), the ignore list and the last 10 warnings.
+per hour, active minutes out of the window's minutes, Likely), the ignore list and the last 10 warnings.
+
+Hint (0.1.10): only web browsers (brave, chrome, msedge, firefox, opera,
+vivaldi, librewolf, waterfox, chromium, thorium) are called "usually normal";
+their heavy writes are cache, history and tabs. Every other program, even a
+well-known heavy writer such as a torrent client, can go wrong, so the warning
+says "worth checking". The balloon adds one hint line; it drops the SSD total,
+then later programs, if the text would pass Windows' 255-character limit. The
+report's Likely column shows "browser - usually normal", "worth checking"
+(other programs at or above the limit) or "-".
 
 `--probe` also prints the SSD drive numbers found and the ten processes that
 wrote most since they started.
